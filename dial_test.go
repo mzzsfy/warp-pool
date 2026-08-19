@@ -49,15 +49,21 @@ func (p *stubProber) set(addr string, eg warppool.Egress) {
 	p.results[addr] = eg
 }
 
-// dialEnv 黑盒拨号测试环境:每实例地址挂真实假 SOCKS5 服务
+// proxyCloser 测试代理服务统一关闭接口
+type proxyCloser interface {
+	Close() error
+}
+
+// dialEnv 黑盒拨号测试环境:每实例地址挂真实假代理服务(按传输方式选型);t 为 TB 以复用于基准
 type dialEnv struct {
-	t      *testing.T
-	p      *warppool.Pool
-	prober *stubProber
-	target net.Listener
+	t         testing.TB
+	p         *warppool.Pool
+	prober    *stubProber
+	transport warppool.DialTransport
+	target    net.Listener
 
 	mu      sync.Mutex
-	servers map[string]*testutil.SOCKS5Server
+	servers map[string]proxyCloser
 }
 
 // addrOf 第 i 个实例的代理地址
@@ -78,12 +84,12 @@ func egV4(ip string) warppool.Egress {
 func egBySeq(i int) warppool.Egress { return egV4(fmt.Sprintf("203.0.113.%d", i)) }
 
 // newDialEnv 构造注入 fake 的池并启动
-func newDialEnv(t *testing.T, min, max int, mut func(*warppool.Options)) *dialEnv {
+func newDialEnv(t testing.TB, min, max int, mut func(*warppool.Options)) *dialEnv {
 	t.Helper()
 	env := &dialEnv{
 		t:       t,
 		prober:  &stubProber{results: map[string]warppool.Egress{}},
-		servers: map[string]*testutil.SOCKS5Server{},
+		servers: map[string]proxyCloser{},
 	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -114,6 +120,7 @@ func newDialEnv(t *testing.T, min, max int, mut func(*warppool.Options)) *dialEn
 	if mut != nil {
 		mut(&opts)
 	}
+	env.transport = opts.DialTransport
 	p, err := warppool.NewForTest(opts, factory, env.prober, nil)
 	if err != nil {
 		t.Fatalf("构造池失败: %v", err)
@@ -130,7 +137,7 @@ func newDialEnv(t *testing.T, min, max int, mut func(*warppool.Options)) *dialEn
 // setEgress 设定第 i 个实例的探测出口
 func (e *dialEnv) setEgress(i int, eg warppool.Egress) { e.prober.set(addrOf(i), eg) }
 
-// resetServer 重建指定地址的假 SOCKS5 服务
+// resetServer 重建指定地址的假代理服务(按传输方式选型)
 func (e *dialEnv) resetServer(addr string) error {
 	e.mu.Lock()
 	old := e.servers[addr]
@@ -138,7 +145,13 @@ func (e *dialEnv) resetServer(addr string) error {
 	if old != nil {
 		_ = old.Close()
 	}
-	srv, err := testutil.NewSOCKS5ServerAt("tcp", addr)
+	var srv proxyCloser
+	var err error
+	if e.transport == warppool.TransportHTTP {
+		srv, err = testutil.NewHTTPConnectServerAt("tcp", addr)
+	} else {
+		srv, err = testutil.NewSOCKS5ServerAt("tcp", addr)
+	}
 	if err != nil {
 		return err
 	}
@@ -148,7 +161,7 @@ func (e *dialEnv) resetServer(addr string) error {
 	return nil
 }
 
-// closeServer 关闭第 i 个实例的假 SOCKS5 服务(拨号即拒)
+// closeServer 关闭第 i 个实例的假代理服务(拨号即拒)
 func (e *dialEnv) closeServer(i int) {
 	e.mu.Lock()
 	srv := e.servers[addrOf(i)]
@@ -159,18 +172,18 @@ func (e *dialEnv) closeServer(i int) {
 	}
 }
 
-// closeAllServers 关闭全部假 SOCKS5 服务
+// closeAllServers 关闭全部假代理服务
 func (e *dialEnv) closeAllServers() {
 	e.mu.Lock()
 	servers := e.servers
-	e.servers = map[string]*testutil.SOCKS5Server{}
+	e.servers = map[string]proxyCloser{}
 	e.mu.Unlock()
 	for _, srv := range servers {
 		_ = srv.Close()
 	}
 }
 
-// shutdownServers 关闭假 SOCKS5 服务与目标监听(池外资源,供泄漏断言前清理)
+// shutdownServers 关闭全部假代理服务与目标监听(池外资源,供泄漏断言前清理)
 func (e *dialEnv) shutdownServers() {
 	e.closeAllServers()
 	_ = e.target.Close()
@@ -647,5 +660,66 @@ func TestDial_池已关闭_返回ErrClosed(t *testing.T) {
 	}
 	if _, err := env.p.DialContextWithKey(context.Background(), "k", "tcp", env.targetAddr()); !errors.Is(err, warppool.ErrClosed) {
 		t.Fatalf("err = %v, 期望 ErrClosed", err)
+	}
+}
+
+// Given HTTP CONNECT 传输 When 轮询拨号 Then 依次覆盖全部实例、CONNECT 目标为业务地址且返回 InstanceConn
+func TestDial_HTTPTransport_CONNECT隧道拨号(t *testing.T) {
+	env := newDialEnv(t, 3, 3, func(o *warppool.Options) {
+		o.DialTransport = warppool.TransportHTTP
+	})
+	for i := range 3 {
+		env.setEgress(i, egBySeq(i+1))
+	}
+	env.waitNormal(3)
+
+	seen := map[warppool.ID]bool{}
+	for range 3 {
+		ic := env.dialOK(env.p.DialContext)
+		seen[ic.Instance().ID] = true
+		_ = ic.Close()
+	}
+	if len(seen) != 3 {
+		t.Fatalf("HTTP 传输轮询应覆盖全部实例, 实际命中 %v", seen)
+	}
+
+	// 假代理侧 CONNECT 请求均指向业务目标
+	env.mu.Lock()
+	servers := make([]*testutil.HTTPConnectServer, 0, len(env.servers))
+	for _, s := range env.servers {
+		if hs, ok := s.(*testutil.HTTPConnectServer); ok {
+			servers = append(servers, hs)
+		}
+	}
+	env.mu.Unlock()
+	if len(servers) != 3 {
+		t.Fatalf("假 HTTP 代理数 = %d, 期望 3", len(servers))
+	}
+	for _, s := range servers {
+		targets := s.Targets()
+		if len(targets) != 1 || targets[0] != env.targetAddr() {
+			t.Fatalf("CONNECT 目标 = %v, 期望 [%s]", targets, env.targetAddr())
+		}
+	}
+}
+
+// Given HTTP CONNECT 传输且实例代理拒连 When 拨号 Then 自动换下一实例成功
+func TestDial_HTTPTransport_实例拒连_自动换下一实例(t *testing.T) {
+	env := newDialEnv(t, 3, 3, func(o *warppool.Options) {
+		o.DialTransport = warppool.TransportHTTP
+	})
+	for i := range 3 {
+		env.setEgress(i, egBySeq(i+1))
+	}
+	env.waitNormal(3)
+	env.closeServer(0)
+
+	for range 6 {
+		ic := env.dialOK(env.p.DialContext)
+		if got := ic.Instance().ID; got == "0" {
+			_ = ic.Close()
+			t.Fatalf("拒连实例 0 不应被成功选中")
+		}
+		_ = ic.Close()
 	}
 }

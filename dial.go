@@ -5,14 +5,15 @@ import (
 	"context"
 	"net"
 	"slices"
-
-	"github.com/mzzsfy/warp-pool/internal/amzwrap"
 )
 
-// 64 位 FNV-1a 参数
+// 64 位 FNV-1a 参数与雪崩收尾常量(murmur3 64 位终混)
 const (
 	fnvOffset64 uint64 = 14695981039346656037
 	fnvPrime64  uint64 = 1099511628211
+	mixPrimeA   uint64 = 0xff51afd7ed558ccd
+	mixPrimeB   uint64 = 0xc4ceb9fe1a85ec53
+	mixShift           = 33
 )
 
 // InstanceInfo 实例只读信息快照
@@ -45,13 +46,20 @@ func (c *instanceConn) Close() error {
 	return c.Conn.Close()
 }
 
-// fnv64a 标准字符串散列(亲和选路)
+// fnv64a 标准字符串散列加雪崩收尾(亲和选路);
+// FNV 差异集中于低位,不混合时短数字后缀(实例 ID)的散列高位不变,
+// rendezvous 排序高度相关导致落点集中
 func fnv64a(s string) uint64 {
 	h := fnvOffset64
 	for i := 0; i < len(s); i++ {
 		h ^= uint64(s[i])
 		h *= fnvPrime64
 	}
+	h ^= h >> mixShift
+	h *= mixPrimeA
+	h ^= h >> mixShift
+	h *= mixPrimeB
+	h ^= h >> mixShift
 	return h
 }
 
@@ -88,7 +96,7 @@ func (p *Pool) dial(ctx context.Context, start uint64, network, addr string) (ne
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		conn, err := dialView(ctx, candidates[(first+i)%len(candidates)], network, addr)
+		conn, err := p.dialView(ctx, candidates[(first+i)%len(candidates)], network, addr)
 		if err == nil {
 			return conn, nil
 		}
@@ -108,7 +116,7 @@ func (p *Pool) dialKey(ctx context.Context, key, network, addr string) (net.Conn
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		conn, err := dialView(ctx, v, network, addr)
+		conn, err := p.dialView(ctx, v, network, addr)
 		if err == nil {
 			return conn, nil
 		}
@@ -138,10 +146,12 @@ func normalCandidates(views []instanceView) []instanceView {
 	return out
 }
 
-// dialView 经实例代理拨号并包装为 InstanceConn(登记在途集合)
-func dialView(ctx context.Context, v instanceView, network, addr string) (net.Conn, error) {
-	conn, err := amzwrap.DialThroughProxy(ctx, v.proxyAddr, network, addr)
+// dialView 按池配置传输经实例代理拨号并包装为 InstanceConn(登记在途集合,累计拨号计数)
+func (p *pool) dialView(ctx context.Context, v instanceView, network, addr string) (net.Conn, error) {
+	p.stats.dialTotal.Add(1)
+	conn, err := p.dialThrough(ctx, v.proxyAddr, network, addr)
 	if err != nil {
+		p.stats.dialFailures.Add(1)
 		return nil, err
 	}
 	wrapped := &instanceConn{

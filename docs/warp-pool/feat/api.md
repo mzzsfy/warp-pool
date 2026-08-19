@@ -22,6 +22,7 @@ type Options struct {
     ReplayBackoffStart time.Duration        // 重播退避起点,默认 1s
     ReplayBackoffMax   time.Duration        // 重播退避上限,默认 60s
     ReplayConcurrency  int                  // 全局重播并发,默认 1
+    DialTransport      DialTransport        // 拨号传输方式:TransportSOCKS5(默认)/TransportHTTP
     Logger             Logger               // Printf 接口,默认静默
 }
 ```
@@ -33,6 +34,7 @@ func New(opts Options) (*Pool, error)   // 校验选项;创建目录;拉起实�
 func (p *Pool) DialContext(ctx context.Context, network, addr string) (net.Conn, error)
 func (p *Pool) DialContextWithKey(ctx context.Context, key, network, addr string) (net.Conn, error)
 func (p *Pool) Instances() []InstanceInfo
+func (p *Pool) Stats() Stats // 池计数快照:状态实例数、重播累计、拨号累计与失败,被动查询
 func (p *Pool) SetStatus(id ID, status Status) error // 非法迁移(如 Disabled→Draining)返回 ErrInvalidTransition
 func (p *Pool) SetMin(n int) error // 新值 Min<=0 或 Min>当前 Max 拒
 func (p *Pool) SetMax(n int) error // 新值 Max<当前 Min 拒

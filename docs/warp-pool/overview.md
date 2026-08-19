@@ -13,15 +13,15 @@ amz 解决"一条 WARP 隧道"的注册、选点、重连;warp-pool 解决"一�
 - 数量模型:总数上限 max,维持 Normal+Probing ≥ min(常态为 min 个 Normal);实例摘除时旧实例占坑排空、新实例自动补位,总数波动于 min~max
 - 淘汰策略接口:内置"排队(背压)"与"杀最老(创建时间+状态优先级)"
 - 实例状态机:Normal / Draining(不接新请求,超时强断在途连接并重播换 IP)/ Disabled(摘除待手动恢复)/ Probing(重建探测中,对外可见)
-- 选路:轮询(默认,失败自动换实例重试)+ 亲和选路(同 key 稳定粘实例,故障自动跳过)
+- 选路:轮询(默认,失败自动换实例重试)+ 亲和选路(同 key 稳定粘实例,故障自动跳过);拨号传输 SOCKS5(默认)/HTTP CONNECT(兜底)可配
 - 拨号 API:标准签名 `DialContext(ctx, network, addr)`,返回连接可断言 `InstanceConn` 获取实例信息(ID/出口 IP/状态),支撑业务主动重启闭环
-- 运行时调整:SetMin/SetMax(自动伸缩对齐)、SetStatus、Instances 查询
+- 运行时调整:SetMin/SetMax(自动伸缩对齐)、SetStatus、Instances 查询、Stats 计数快照(状态数/重播累计/拨号累计与失败,被动查询式)
 - 周期健康检查:HealthCheck 失败自动转 Draining 走重建
 
 ## 不做
 
 - 独立服务/进程形态(纯库;需要服务的业务自行包 main)
-- HTTP/SOCKS5 协议封装(仅暴露 DialContext,协议由业务组装;amz 实例自身 listener 仍可用)
+- HTTP/SOCKS5 协议封装(仅暴露 DialContext,协议由业务组装;amz 实例自身 listener 仍可用;SOCKS5 与 HTTP CONNECT 为经实例拨号的两种内置传输,非对外协议服务)
 - TUN 模式管理(仅 HTTP/SOCKS5 通道;amz TUN 能力不纳入池管)
 - Team WARP / license key 管理(amz 路线图未支持)
 - 池元数据持久化(state 文件由 amz 自管,池重启按 min 重建并复用注册态)

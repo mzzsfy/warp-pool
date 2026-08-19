@@ -26,6 +26,17 @@ const (
 	defaultReplayBackoffStart  = 1 * time.Second
 	defaultReplayBackoffMax    = 60 * time.Second
 	defaultReplayConcurrency   = 1
+	defaultDialTransport       = TransportSOCKS5
+)
+
+// DialTransport 经实例代理拨号的传输方式
+type DialTransport string
+
+const (
+	// TransportSOCKS5 经实例 listener 的 SOCKS5 代理拨号(默认)
+	TransportSOCKS5 DialTransport = "socks5"
+	// TransportHTTP 经实例 listener 的 HTTP CONNECT 隧道拨号
+	TransportHTTP DialTransport = "http"
 )
 
 // 端口合法区间
@@ -50,6 +61,7 @@ type Options struct {
 	ReplayBackoffStart  time.Duration // 重播退避起点
 	ReplayBackoffMax    time.Duration // 重播退避上限
 	ReplayConcurrency   int           // 全局重播并发
+	DialTransport       DialTransport // 拨号传输方式(socks5 默认 / http)
 	Logger              Logger        // 日志输出
 }
 
@@ -94,6 +106,9 @@ func (o Options) withDefaults() Options {
 	if o.ReplayConcurrency <= 0 {
 		o.ReplayConcurrency = defaultReplayConcurrency
 	}
+	if o.DialTransport == "" {
+		o.DialTransport = defaultDialTransport
+	}
 	if o.Logger == nil {
 		o.Logger = discardLogger{}
 	}
@@ -137,6 +152,11 @@ func (o Options) Validate() error {
 	}
 	if o.ReplayConcurrency <= 0 {
 		return errors.New("ReplayConcurrency 必须为正")
+	}
+	switch o.DialTransport {
+	case TransportSOCKS5, TransportHTTP:
+	default:
+		return fmt.Errorf("DialTransport %q 非法, 仅支持 %s/%s", o.DialTransport, TransportSOCKS5, TransportHTTP)
 	}
 	return nil
 }

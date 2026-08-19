@@ -27,6 +27,7 @@ func TestOptionsWithDefaults_ZeroOptions_FillsDefaults(t *testing.T) {
 		{"ReplayBackoffStart", got.ReplayBackoffStart, defaultReplayBackoffStart},
 		{"ReplayBackoffMax", got.ReplayBackoffMax, defaultReplayBackoffMax},
 		{"ReplayConcurrency", got.ReplayConcurrency, defaultReplayConcurrency},
+		{"DialTransport", got.DialTransport, defaultDialTransport},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -58,6 +59,7 @@ func TestOptionsWithDefaults_CustomOptions_KeepsNonZero(t *testing.T) {
 		ReplayBackoffStart:  100 * time.Millisecond,
 		ReplayBackoffMax:    30 * time.Second,
 		ReplayConcurrency:   3,
+		DialTransport:       TransportHTTP,
 		Logger:              discardLogger{},
 	}
 	if got := in.withDefaults(); got != in {
@@ -127,6 +129,7 @@ func TestOptions_Validate_IllegalFields_ReturnError(t *testing.T) {
 			return o
 		}},
 		{"重播并发非正", func(o Options) Options { o.ReplayConcurrency = 0; return o }},
+		{"拨号传输非法", func(o Options) Options { o.DialTransport = "grpc"; return o }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -141,6 +144,16 @@ func TestOptions_Validate_IllegalFields_ReturnError(t *testing.T) {
 func TestOptions_Validate_MinimalOptions_Passes(t *testing.T) {
 	if err := (Options{Min: 1, Max: 1}.withDefaults()).Validate(); err != nil {
 		t.Fatalf("最小配置应通过校验: %v", err)
+	}
+}
+
+// Given 两种合法拨号传输 When 校验 Then 均通过
+func TestOptions_Validate_DialTransport_LegalValues_Pass(t *testing.T) {
+	for _, tr := range []DialTransport{TransportSOCKS5, TransportHTTP} {
+		o := Options{Min: 1, Max: 1, DialTransport: tr}.withDefaults()
+		if err := o.Validate(); err != nil {
+			t.Fatalf("传输 %q 应通过校验: %v", tr, err)
+		}
 	}
 }
 

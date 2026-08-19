@@ -2,6 +2,8 @@
 package warppool
 
 import (
+	"strconv"
+
 	"github.com/mzzsfy/warp-pool/internal/amzwrap"
 )
 
@@ -25,3 +27,25 @@ func InflightConnsForTest(p *Pool, id ID) int {
 	}
 	return -1
 }
+
+// MakeViewsForTest 构造 n 个 ID 互异、状态恒 Normal 的候选视图(选路纯函数基准与分配断言)
+func MakeViewsForTest(n int) []instanceView {
+	normal := func() Status { return StatusNormal }
+	out := make([]instanceView, n)
+	for i := range out {
+		out[i] = instanceView{id: ID(strconv.Itoa(i)), status: normal}
+	}
+	return out
+}
+
+// Fnv64aForTest 白盒暴露亲和散列纯函数
+var Fnv64aForTest = fnv64a
+
+// NormalCandidatesForTest 白盒暴露 Normal 候选过滤纯函数
+var NormalCandidatesForTest = normalCandidates
+
+// AffinityOrderForTest 白盒暴露亲和排序纯函数
+var AffinityOrderForTest = affinityOrder
+
+// PublishForTest 白盒暴露快照发布(写时复制;仅池静默态调用,协调 goroutine 不并发触碰实例表)
+func (p *Pool) PublishForTest() { p.publish() }

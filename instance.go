@@ -115,6 +115,7 @@ type instConfig struct {
 	replaySem    chan struct{}
 	events       chan event
 	logger       Logger
+	stats        *poolStats
 }
 
 // instance 单实例生命周期主体;状态写入仅发生在管理 goroutine,读端原子
@@ -133,6 +134,7 @@ type instance struct {
 	replaySem    chan struct{}
 	events       chan event
 	logger       Logger
+	stats        *poolStats
 
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -172,6 +174,7 @@ func newInstance(parent context.Context, cfg instConfig) *instance {
 		replaySem:    cfg.replaySem,
 		events:       cfg.events,
 		logger:       cfg.logger,
+		stats:        cfg.stats,
 		ctx:          ctx,
 		cancel:       cancel,
 		cmds:         make(chan command, cmdChanCap),
@@ -321,6 +324,7 @@ func (in *instance) handle(c command) (stop bool) {
 		}
 	case cmdReplay:
 		if s := in.Status(); s == StatusProbing || s == StatusNormal {
+			in.stats.replays.Add(1)
 			in.setStatus(StatusProbing)
 			if !in.ensureClient(false, in.backoffDelay()) {
 				return true

@@ -27,12 +27,23 @@ const stateFileFormat = "inst-%s.json"
 // healthFunc 健康检查:经实例代理 listener 的连通性探测
 type healthFunc func(ctx context.Context, proxyAddr string) error
 
+// dialFunc 经实例代理 listener 的拨号实现(按 DialTransport 选择)
+type dialFunc func(ctx context.Context, proxyAddr, network, addr string) (net.Conn, error)
+
+// poolStats 池级原子计数(拨号热路径与实例管理 goroutine 直接累加,读端快照聚合)
+type poolStats struct {
+	replays      atomic.Int64
+	dialTotal    atomic.Int64
+	dialFailures atomic.Int64
+}
+
 // pool 实例集合编排核心;instances/usedKeys/keysByInst/emptyByInst/portOf 仅协调 goroutine 访问
 type pool struct {
-	opts    Options
-	factory amzwrap.Factory
-	prober  Prober
-	health  healthFunc
+	opts        Options
+	factory     amzwrap.Factory
+	prober      Prober
+	health      healthFunc
+	dialThrough dialFunc
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -48,6 +59,7 @@ type pool struct {
 	ports       *portAllocator
 	replaySem   chan struct{}
 	snap        atomic.Pointer[[]instanceView]
+	stats       poolStats
 
 	min       atomic.Int32
 	max       atomic.Int32
@@ -72,6 +84,10 @@ func newPool(raw Options, factory amzwrap.Factory, prober Prober, health healthF
 	if health == nil {
 		health = tcpHealth
 	}
+	dialThrough := dialFunc(amzwrap.DialThroughProxy)
+	if opts.DialTransport == TransportHTTP {
+		dialThrough = amzwrap.DialThroughProxyHTTP
+	}
 	if err := os.MkdirAll(opts.StateDir, 0o700); err != nil {
 		return nil, fmt.Errorf("创建 state 目录失败: %w", err)
 	}
@@ -85,6 +101,7 @@ func newPool(raw Options, factory amzwrap.Factory, prober Prober, health healthF
 		factory:     factory,
 		prober:      prober,
 		health:      health,
+		dialThrough: dialThrough,
 		ctx:         ctx,
 		cancel:      cancel,
 		events:      make(chan event, eventChanCap),
@@ -264,6 +281,7 @@ func (p *pool) createInstance() bool {
 		replaySem:    p.replaySem,
 		events:       p.events,
 		logger:       p.opts.Logger,
+		stats:        &p.stats,
 	})
 	p.instances[id] = in
 	p.portOf[id] = off

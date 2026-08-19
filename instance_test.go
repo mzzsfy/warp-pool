@@ -90,6 +90,7 @@ type instEnv struct {
 	sem      chan struct{}
 	factory  fakeamz.FakeFactory
 	stateDir string
+	stats    poolStats
 
 	mu         sync.Mutex
 	clients    []*fakeamz.FakeClient
@@ -171,6 +172,7 @@ func (e *instEnv) startInst(id ID, proxyAddr string) *instance {
 		replaySem:    e.sem,
 		events:       e.events,
 		logger:       discardLogger{},
+		stats:        &e.stats,
 	})
 	return in
 }

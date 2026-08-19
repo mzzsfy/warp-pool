@@ -4,22 +4,23 @@
 
 ```
 warp-pool/
-├── warppool.go        包注释 + Pool 门面 + 公开错误(api 模块)
-├── options.go         Options + 默认值 + 校验
-├── pool.go            pool 编排:reconcile 循环 / 快照发布 / 事件命令中转
+├── warppool.go        包注释 + Pool 门面 + 公开错误 + Stats(api 模块)
+├── options.go         Options + 默认值 + 校验 + DialTransport 枚举
+├── pool.go            pool 编排:reconcile 循环 / 快照发布 / 事件命令中转 / 计数
 ├── instance.go        instance:状态机 / amz 生命周期 / 重播退避 / 在途连接登记
-├── dial.go            DialContext / DialContextWithKey / InstanceConn / 选路
+├── dial.go            DialContext / DialContextWithKey / InstanceConn / 选路(rendezvous)
 ├── egress.go          Egress / Prober / DedupeKeyer 三内置
 ├── eviction.go        Evictor / EvictNone / EvictOldest
 ├── status.go          Status 枚举 + ID
 ├── *_test.go          同名单元测试(fake 注入,离线)
+├── bench_test.go      性能基准与均匀性/零分配断言
 ├── e2e_test.go        build tag `e2e`,真实 WARP 验证
 ├── internal/
-│   ├── amzwrap/       amz Client 接口化包装(SOCKS5 拨号)
+│   ├── amzwrap/       amz Client 接口化包装(SOCKS5/HTTP CONNECT 拨号)
 │   ├── fakeamz/       测试专用 amz 假实现,仅 *_test.go 导入,不进产物
-│   └── testutil/      测试辅助(socks5 假服务/假探测服务等)
+│   └── testutil/      测试辅助(socks5/httpconnect 假服务等)
 ├── go.mod             module github.com/mzzsfy/warp-pool
-├── README.md          特性 + 10 行示例 + 配置表
+├── README.md          特性 + 10 行示例 + 配置表 + 基准表
 └── docs/warp-pool/    设计文档(本目录树)
 ```
 

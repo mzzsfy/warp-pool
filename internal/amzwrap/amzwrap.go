@@ -2,9 +2,13 @@
 package amzwrap
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/skye-z/amz"
 	"golang.org/x/net/proxy"
@@ -114,3 +118,70 @@ func DialThroughProxy(ctx context.Context, proxyAddr, network, addr string) (net
 	}
 	return conn, nil
 }
+
+// CONNECT 应答成功状态码闭区间
+const (
+	connectStatusMin = 200
+	connectStatusMax = 299
+)
+
+// DialThroughProxyHTTP 经 HTTP 代理 CONNECT 建立到 addr 的隧道,应答 2xx 后回传裸连接;
+// 握手期超时随 ctx(成功后清除),network 仅按 CONNECT 语义尽力传递(由代理侧解释)
+func DialThroughProxyHTTP(ctx context.Context, proxyAddr, network, addr string) (net.Conn, error) {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", proxyAddr)
+	if err != nil {
+		return nil, fmt.Errorf("经代理 %s 拨号 %s 失败: %w", proxyAddr, addr, err)
+	}
+	// 握手期以 ctx 约束:截止时间设 deadline,无截止时间时监听取消打断阻塞 IO
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	watchDone := ctx.Done()
+	watchStop := make(chan struct{})
+	stopWatch := sync.OnceFunc(func() { close(watchStop) })
+	if watchDone != nil {
+		go func() {
+			select {
+			case <-watchDone:
+				_ = conn.SetDeadline(time.Now())
+			case <-watchStop:
+			}
+		}()
+	} else {
+		stopWatch()
+	}
+	fail := func(err error) (net.Conn, error) {
+		stopWatch()
+		_ = conn.Close()
+		return nil, err
+	}
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", addr, addr); err != nil {
+		return fail(fmt.Errorf("经代理 %s 发送 CONNECT %s 失败: %w", proxyAddr, addr, err))
+	}
+	br := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect, Host: addr})
+	if err != nil {
+		return fail(fmt.Errorf("解析代理 %s 的 CONNECT 应答失败: %w", proxyAddr, err))
+	}
+	if resp.StatusCode < connectStatusMin || resp.StatusCode > connectStatusMax {
+		return fail(fmt.Errorf("代理 %s 拒绝 CONNECT %s: 应答 %s", proxyAddr, addr, resp.Status))
+	}
+	// 隧道归调用方:尽力避免取消监听毒化在途连接(select 交错下不构成顺序保证)
+	stopWatch()
+	_ = conn.SetDeadline(time.Time{})
+	if br.Buffered() == 0 {
+		return conn, nil
+	}
+	// 应答后代理已预发隧道数据:保留缓冲读端
+	return &bufferedConn{Conn: conn, r: br}, nil
+}
+
+// bufferedConn 前置缓冲区的连接(应答解析残余字节优先读)
+type bufferedConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+// Read 实现 net.Conn(先耗尽缓冲)
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }

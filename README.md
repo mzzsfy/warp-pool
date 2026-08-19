@@ -76,6 +76,7 @@ func main() {
 | DrainTimeout | 60s | Draining 强断在途连接的超时 |
 | ReplayBackoffStart / Max | 1s / 60s | 重播退避起点 / 上限 |
 | ReplayConcurrency | 1 | 全局重播并发 |
+| DialTransport | socks5 | 拨号传输:socks5 / http(经实例 listener 的 CONNECT 隧道) |
 | Logger | 静默 | `Printf(string, ...any)` 接口 |
 
 ## 测试
@@ -83,10 +84,42 @@ func main() {
 ```bash
 go test ./... -race -count=1 -cover   # 离线单测(默认)
 go test -tags e2e -run E2E ./... -v   # 真实 WARP 端到端(需网络)
+go test -run xxx -bench . -benchmem   # 性能基准(并发拨号项建议 -benchtime 20000x,见下注)
 ```
+
+## 性能基准
+
+环境:Windows 10 Pro / Intel i5-8500(6C6T)/ go1.26.1 windows/amd64;`-benchmem -benchtime 1s`。
+全链路基准经假 SOCKS5 代理(127.0.0.1 loopback,真实 TCP 路径),非直连 WARP。
+
+| 基准 | 规模 | ns/op | B/op | allocs/op |
+|------|------|-------|------|-----------|
+| DialContext 轮询全链路 | 10 实例 | 482 291 | 71 119 | 87 |
+| DialContextWithKey 亲和全链路 | 10 实例 | 484 676 | 71 980 | 88 |
+| DialContextConcurrent 并发拨号 | 10 实例,≥100 goroutine | 1 666 392 | 71 275 | 89 |
+| Snapshot 并发读(Instances) | 10 / 50 实例 | 243 / 1 100 | 768 / 4 096 | 1 |
+| Snapshot 读写并发(1ms 周期重发布) | 10 / 50 实例 | 234 / 1 093 | 768 / 4 099 | 1 |
+| Snapshot 写发布(写时复制) | 10 / 50 实例 | 1 554 / 11 852 | 1 240 / 5 720 | 22 / 102 |
+| AffinityOrder 亲和排序 | 候选 10 / 50 / 100 | 2 336 / 17 059 / 43 151 | 896 / 4 096 / 8 192 | 1 |
+| NormalCandidates 候选过滤 | 实例 10 / 50 / 100 | 431 / 2 232 / 4 209 | 896 / 4 096 / 8 192 | 1 |
+| Fnv64a 亲和散列 | - | 9.8 | 0 | 0 |
+
+结论:
+
+- 选路开销微秒级:轮询(候选过滤+取模)约 0.43µs/10 实例,亲和(过滤+rendezvous 排序)约 2.3µs/10 实例,占全链路拨号(482µs)不足 0.5%。
+- 选路纯函数零分配:散列与排序比较路径 0 分配;候选过滤/亲和排序恒 1 次分配(结果切片拷贝),不随规模增长(`Test选路纯函数_零分配` 断言)。
+- 快照读写不互斥:1ms 周期后台重发布下,读写并发与纯读耗时持平(±1%),无锁读成立;写发布为写时复制,仅实例集合变化时发生。
+- 分布均匀性(10/50/100 实例,100 实例监听端口贴近 65535 上限):轮询精确均匀;亲和落点卡方检验达标(阈值=自由度+4σ,由 `TestDial_选路分布均匀性` 断言)。
+- 并发拨号无锁竞争:≥100 goroutine 下 mutex profile 中池自有互斥(实例在途登记)全程累计等待 7µs/2 万次拨号;CPU 热点 99% 为网络 syscall(`runtime.cgocall`),无池函数热点。
+
+注:Windows 对 TIME_WAIT 端口总量有限制,close 密集的并发拨号基准长时间运行会耗尽端口预算(表现为 WSAEADDRINUSE/拒连),故并发项按迭代数封顶执行(`-benchtime 20000x`),其 ns/op 含少量重试等待,量级参考即可。
 
 ## 设计文档
 
 `docs/warp-pool/`(overview / architecture / api-index / project-design / data-design / feat 模块设计 / steps 步骤)。
 
 注意:库保证池内出口 IP 唯一(探测可得范围内),不承诺多样性——同机出口 IP 受 Cloudflare 分配约束。
+
+## 从 opencode2api 迁移
+
+自研 WarpPool(Rebuild 换 IP)与 nodePool(会话亲和 rebind)可整体替换为库能力:`DialContext` 接 `http.Transport`,`DialContextWithKey` 做会话粘性,`InstanceConn` 断言 + `SetStatus` 做封禁换 IP。能力映射、可编译对照示例与收益说明见 [migration-opencode2api.md](docs/warp-pool/migration-opencode2api.md)。
