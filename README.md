@@ -87,6 +87,19 @@ go test -tags e2e -run E2E ./... -v   # 真实 WARP 端到端(需网络)
 go test -run xxx -bench . -benchmem   # 性能基准(并发拨号项建议 -benchtime 20000x,见下注)
 ```
 
+## 代理测试入口
+
+`cmd/proxy` 将池包装为本地 HTTP 代理,用于真实网络手动验收:
+
+```bash
+go run ./cmd/proxy                          # 默认 127.0.0.1:8080, 实例 2-2, socks5 传输
+go run ./cmd/proxy -listen 127.0.0.1:8080 -min 2 -max 4 -transport http -state ./warp-state
+
+curl -x http://127.0.0.1:8080 https://api4.ipify.org   # 经池出口, 多次请求观察轮换
+```
+
+每次 CONNECT 打印所选实例与出口 IP,周期输出池状态计数;Ctrl-C 排空在途请求后退出。
+
 ## 性能基准
 
 环境:Windows 10 Pro / Intel i5-8500(6C6T)/ go1.26.1 windows/amd64;`-benchmem -benchtime 1s`。
