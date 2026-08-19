@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mzzsfy/warp-pool/internal/amzwrap"
+	"github.com/mzzsfy/warp-pool/internal/fakeamz"
 	"github.com/mzzsfy/warp-pool/internal/testutil"
 )
 
@@ -65,7 +66,7 @@ func TestDefaultFactory_NewClient_CreatesOfflineClient(t *testing.T) {
 
 // Given 已启动且 Run 阻塞中的假客户端 When Close Then Run 返回、状态停转且重复 Close 幂等
 func TestFakeClient_Lifecycle_CloseUnblocksRun(t *testing.T) {
-	client := amzwrap.NewFakeClient("127.0.0.1:40001")
+	client := fakeamz.NewFakeClient("127.0.0.1:40001")
 	if err := client.Start(context.Background()); err != nil {
 		t.Fatalf("Start 失败: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestFakeClient_Lifecycle_CloseUnblocksRun(t *testing.T) {
 // Given 注入 StartErr 的假客户端 When Start Then 返回该错误且不进入运行态
 func TestFakeClient_StartErr_ReturnsInjectedError(t *testing.T) {
 	injected := errors.New("启动失败")
-	client := amzwrap.NewFakeClient("127.0.0.1:40002")
+	client := fakeamz.NewFakeClient("127.0.0.1:40002")
 	client.StartErr = injected
 	if err := client.Start(context.Background()); !errors.Is(err, injected) {
 		t.Fatalf("Start 错误 = %v, 期望注入错误", err)
@@ -115,11 +116,11 @@ func TestFakeClient_StartErr_ReturnsInjectedError(t *testing.T) {
 
 // Given 未注入构造函数的假工厂 When 创建客户端 Then 返回携带监听地址的 FakeClient
 func TestFakeFactory_DefaultNew_CreatesFakeClient(t *testing.T) {
-	client, err := (amzwrap.FakeFactory{}).NewClient("state.json", "127.0.0.1:40003", nil)
+	client, err := (fakeamz.FakeFactory{}).NewClient("state.json", "127.0.0.1:40003", nil)
 	if err != nil {
 		t.Fatalf("创建客户端失败: %v", err)
 	}
-	fake, ok := client.(*amzwrap.FakeClient)
+	fake, ok := client.(*fakeamz.FakeClient)
 	if !ok {
 		t.Fatalf("客户端类型 = %T, 期望 *FakeClient", client)
 	}
@@ -131,7 +132,7 @@ func TestFakeFactory_DefaultNew_CreatesFakeClient(t *testing.T) {
 // Given 注入构造函数的假工厂 When 创建客户端 Then 参数透传且错误原样返回
 func TestFakeFactory_InjectedNew_PassesArgsAndError(t *testing.T) {
 	injected := errors.New("构造失败")
-	factory := amzwrap.FakeFactory{New: func(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error) {
+	factory := fakeamz.FakeFactory{New: func(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error) {
 		if storagePath != "state.json" || listenAddr != "127.0.0.1:40004" {
 			t.Fatalf("构造参数 = (%q, %q), 期望原样透传", storagePath, listenAddr)
 		}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/mzzsfy/warp-pool"
 	"github.com/mzzsfy/warp-pool/internal/amzwrap"
+	"github.com/mzzsfy/warp-pool/internal/fakeamz"
 	"github.com/mzzsfy/warp-pool/internal/testutil"
 )
 
@@ -89,11 +90,11 @@ func newDialEnv(t *testing.T, min, max int, mut func(*warppool.Options)) *dialEn
 		t.Fatalf("启动目标服务失败: %v", err)
 	}
 	env.target = ln
-	factory := amzwrap.FakeFactory{New: func(_, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	factory := fakeamz.FakeFactory{New: func(_, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		if err := env.resetServer(listenAddr); err != nil {
 			return nil, err
 		}
-		return amzwrap.NewFakeClient(listenAddr), nil
+		return fakeamz.NewFakeClient(listenAddr), nil
 	}}
 	opts := warppool.Options{
 		Min:                 min,

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mzzsfy/warp-pool/internal/amzwrap"
+	"github.com/mzzsfy/warp-pool/internal/fakeamz"
 )
 
 // pool 测试默认配置(周期与超时均压缩,禁长 sleep)
@@ -66,7 +67,7 @@ type poolEnv struct {
 	p      *pool
 
 	mu         sync.Mutex
-	clients    []*amzwrap.FakeClient
+	clients    []*fakeamz.FakeClient
 	stateAtNew []bool
 }
 
@@ -85,9 +86,9 @@ func newPoolForTest(t *testing.T, mut func(o *Options)) *poolEnv {
 		prober: &stubProber{results: map[string]Egress{}},
 		health: &stubHealth{},
 	}
-	factory := amzwrap.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	factory := fakeamz.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		_, statErr := os.Stat(storagePath)
-		c := &fileClient{FakeClient: amzwrap.NewFakeClient(listenAddr), statePath: storagePath}
+		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr), statePath: storagePath}
 		env.mu.Lock()
 		env.clients = append(env.clients, c.FakeClient)
 		env.stateAtNew = append(env.stateAtNew, statErr == nil)
@@ -273,7 +274,7 @@ func TestPool_ReplacesLostNormal(t *testing.T) {
 }
 
 // client 返回第 n 个创建的客户端
-func (e *poolEnv) client(n int) *amzwrap.FakeClient {
+func (e *poolEnv) client(n int) *fakeamz.FakeClient {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.clients[n]
@@ -578,10 +579,10 @@ func TestPool_CloseNoLeak(t *testing.T) {
 }
 
 // clientsSnapshot 客户端列表副本
-func (e *poolEnv) clientsSnapshot() []*amzwrap.FakeClient {
+func (e *poolEnv) clientsSnapshot() []*fakeamz.FakeClient {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return append([]*amzwrap.FakeClient(nil), e.clients...)
+	return append([]*fakeamz.FakeClient(nil), e.clients...)
 }
 
 // Given 持续读写快照的并发负载 When 对齐与状态迁移进行 Then -race 无竞争且快照自洽

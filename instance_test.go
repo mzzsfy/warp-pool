@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mzzsfy/warp-pool/internal/amzwrap"
+	"github.com/mzzsfy/warp-pool/internal/fakeamz"
 )
 
 // 测试默认时长(全部远短于生产默认,禁长 sleep)
@@ -70,7 +71,7 @@ func (p *stubProber) callCount() int {
 
 // fileClient 模拟 amz 落盘时机:Start(注册)成功才写 state 文件
 type fileClient struct {
-	*amzwrap.FakeClient
+	*fakeamz.FakeClient
 	statePath string
 }
 
@@ -87,11 +88,11 @@ type instEnv struct {
 	prober   *stubProber
 	events   chan event
 	sem      chan struct{}
-	factory  amzwrap.FakeFactory
+	factory  fakeamz.FakeFactory
 	stateDir string
 
 	mu         sync.Mutex
-	clients    []*amzwrap.FakeClient
+	clients    []*fakeamz.FakeClient
 	stateAtNew []bool // 每次创建客户端时 state 文件是否已存在
 	startErrs  map[string]error
 }
@@ -106,9 +107,9 @@ func newInstEnv(t *testing.T, results map[string]Egress) *instEnv {
 		stateDir:  t.TempDir(),
 		startErrs: map[string]error{},
 	}
-	env.factory = amzwrap.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	env.factory = fakeamz.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		_, statErr := os.Stat(storagePath)
-		c := &fileClient{FakeClient: amzwrap.NewFakeClient(listenAddr), statePath: storagePath}
+		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr), statePath: storagePath}
 		env.mu.Lock()
 		seq := len(env.clients)
 		env.clients = append(env.clients, c.FakeClient)
@@ -141,7 +142,7 @@ func (e *instEnv) clientCount() int {
 }
 
 // client 返回第 n 个创建的客户端
-func (e *instEnv) client(n int) *amzwrap.FakeClient {
+func (e *instEnv) client(n int) *fakeamz.FakeClient {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.clients[n]
@@ -553,12 +554,12 @@ func TestInstance_ReplaySerializedBySemaphore(t *testing.T) {
 		mu.Lock()
 		inReg--
 		mu.Unlock()
-		return amzwrap.NewFakeClient(listenAddr), nil
+		return fakeamz.NewFakeClient(listenAddr), nil
 	}
 	env := newInstEnv(t, map[string]Egress{})
-	env.factory = amzwrap.FakeFactory{New: slowNew}
+	env.factory = fakeamz.FakeFactory{New: slowNew}
 	in1 := env.startInst("1", ":1")
-	env.factory = amzwrap.FakeFactory{New: slowNew}
+	env.factory = fakeamz.FakeFactory{New: slowNew}
 	in2 := env.startInst("2", ":1")
 	env.waitEvent(evReady)
 	env.waitEvent(evReady)

@@ -15,7 +15,8 @@ warp-pool/
 ├── *_test.go          同名单元测试(fake 注入,离线)
 ├── e2e_test.go        build tag `e2e`,真实 WARP 验证
 ├── internal/
-│   ├── amzwrap/       amz Client 接口化包装(可 fake;SOCKS5 拨号)
+│   ├── amzwrap/       amz Client 接口化包装(SOCKS5 拨号)
+│   ├── fakeamz/       测试专用 amz 假实现,仅 *_test.go 导入,不进产物
 │   └── testutil/      测试辅助(socks5 假服务/假探测服务等)
 ├── go.mod             module github.com/mzzsfy/warp-pool
 ├── README.md          特性 + 10 行示例 + 配置表
@@ -29,7 +30,8 @@ warp-pool/
 | 目录 | 职责 | 命名规范 |
 |------|------|---------|
 | 根 | 库公开面与各模块实现,文件名=模块名,与 feat/ 文档一一对应 | 小写单词,与 feat/ 文档同名 |
-| internal/amzwrap | 唯一 import amz 的位置,接口化供 fake;提供经代理的 SOCKS5 拨号 | 对外仅暴露接口与默认实现 |
+| internal/amzwrap | 唯一 import amz 的位置,接口化供注入;提供经代理的 SOCKS5 拨号 | 对外仅暴露接口与默认实现 |
+| internal/fakeamz | 测试专用 fake,独立包避免进产物二进制 | 仅供 *_test.go 引用 |
 | internal/testutil | 跨模块测试辅助,不进公开 API | 仅供 *_test.go 引用 |
 | docs/warp-pool | 设计文档树(bootstrap 产物) | 见 dev-flow 文档总览 |
 | StateDir(运行时) | 实例 state 文件(默认 ./warp-state),运行时生成 | inst-<id>.json |

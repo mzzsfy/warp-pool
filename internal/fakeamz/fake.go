@@ -1,8 +1,11 @@
-package amzwrap
+// Package fakeamz 测试专用 amzwrap 假实现,仅被 *_test.go 导入,不进产物二进制
+package fakeamz
 
 import (
 	"context"
 	"sync"
+
+	"github.com/mzzsfy/warp-pool/internal/amzwrap"
 )
 
 // FakeClient 核心层测试用假客户端:并发安全,Run 阻塞至 Close
@@ -57,10 +60,10 @@ func (c *FakeClient) Close() error {
 }
 
 // Status 实现 Client
-func (c *FakeClient) Status() Status {
+func (c *FakeClient) Status() amzwrap.Status {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return Status{Running: c.running, ListenAddress: c.listenAddr}
+	return amzwrap.Status{Running: c.running, ListenAddress: c.listenAddr}
 }
 
 // ListenAddress 实现 Client
@@ -86,11 +89,11 @@ func (c *FakeClient) Closed() bool {
 
 // FakeFactory 假工厂:New 非 nil 时交由注入函数构造,否则创建默认 FakeClient
 type FakeFactory struct {
-	New func(storagePath, listenAddr string, logger Logger) (Client, error)
+	New func(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error)
 }
 
 // NewClient 实现 Factory
-func (f FakeFactory) NewClient(storagePath, listenAddr string, logger Logger) (Client, error) {
+func (f FakeFactory) NewClient(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error) {
 	if f.New != nil {
 		return f.New(storagePath, listenAddr, logger)
 	}
