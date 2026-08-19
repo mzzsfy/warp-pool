@@ -1,0 +1,9 @@
+# IDE
+.idea/
+
+*.bin
+*.exe
+*.http
+
+# 实例 state(运行时生成)
+warp-state/
