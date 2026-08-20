@@ -2,6 +2,7 @@
 package warppool
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func TestOptionsWithDefaults_ZeroOptions_FillsDefaults(t *testing.T) {
 		{"ListenBase", got.ListenBase, defaultListenBase},
 		{"StateDir", got.StateDir, defaultStateDir},
 		{"Evictor", got.Evictor, EvictNone{}},
-		{"DedupeKeyer", got.DedupeKeyer, DedupeByV4{}},
+		{"DedupeKeyer", got.DedupeKeyer, DedupeByV6{}},
 		{"EgressProbeV4URL", got.EgressProbeV4URL, defaultEgressProbeV4URL},
 		{"EgressProbeV6URL", got.EgressProbeV6URL, defaultEgressProbeV6URL},
 		{"HealthInterval", got.HealthInterval, defaultHealthInterval},
@@ -60,9 +61,10 @@ func TestOptionsWithDefaults_CustomOptions_KeepsNonZero(t *testing.T) {
 		ReplayBackoffMax:    30 * time.Second,
 		ReplayConcurrency:   3,
 		DialTransport:       TransportHTTP,
+		Endpoints:           []string{"162.159.192.1:2408", "162.159.193.10:500"},
 		Logger:              discardLogger{},
 	}
-	if got := in.withDefaults(); got != in {
+	if got := in.withDefaults(); !reflect.DeepEqual(got, in) {
 		t.Fatalf("withDefaults() = %+v, 期望原样保留 %+v", got, in)
 	}
 }
@@ -130,6 +132,10 @@ func TestOptions_Validate_IllegalFields_ReturnError(t *testing.T) {
 		}},
 		{"重播并发非正", func(o Options) Options { o.ReplayConcurrency = 0; return o }},
 		{"拨号传输非法", func(o Options) Options { o.DialTransport = "grpc"; return o }},
+		{"Endpoints缺端口", func(o Options) Options { o.Endpoints = []string{"162.159.192.1"}; return o }},
+		{"Endpoints端口非数字", func(o Options) Options { o.Endpoints = []string{"162.159.192.1:x"}; return o }},
+		{"Endpoints端口超上限", func(o Options) Options { o.Endpoints = []string{"162.159.192.1:65536"}; return o }},
+		{"Endpoints含空串", func(o Options) Options { o.Endpoints = []string{""}; return o }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -154,6 +160,14 @@ func TestOptions_Validate_DialTransport_LegalValues_Pass(t *testing.T) {
 		if err := o.Validate(); err != nil {
 			t.Fatalf("传输 %q 应通过校验: %v", tr, err)
 		}
+	}
+}
+
+// Given 合法 endpoint 列表 When 校验 Then 通过
+func TestOptions_Validate_LegalEndpoints_Pass(t *testing.T) {
+	o := Options{Min: 1, Max: 1, Endpoints: []string{"162.159.192.1:2408", "[2606:4700:d0::a29f:c001]:500"}}.withDefaults()
+	if err := o.Validate(); err != nil {
+		t.Fatalf("合法 Endpoints 应通过校验: %v", err)
 	}
 }
 

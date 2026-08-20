@@ -62,6 +62,7 @@ type Options struct {
 	ReplayBackoffMax    time.Duration // 重播退避上限
 	ReplayConcurrency   int           // 全局重播并发
 	DialTransport       DialTransport // 拨号传输方式(socks5 默认 / http)
+	Endpoints           []string      // 实例 endpoint(host:port)列表;空为自动选优,非空按创建序轮询分配,重播时轮换
 	Logger              Logger        // 日志输出
 }
 
@@ -77,7 +78,7 @@ func (o Options) withDefaults() Options {
 		o.Evictor = EvictNone{}
 	}
 	if o.DedupeKeyer == nil {
-		o.DedupeKeyer = DedupeByV4{}
+		o.DedupeKeyer = DedupeByV6{}
 	}
 	if o.EgressProbeV4URL == "" {
 		o.EgressProbeV4URL = defaultEgressProbeV4URL
@@ -126,7 +127,7 @@ func (o Options) Validate() error {
 	if o.Max > maxListenPort {
 		return fmt.Errorf("Max(%d) 不能大于端口空间上限 %d", o.Max, maxListenPort)
 	}
-	if err := validateListenBase(o.ListenBase); err != nil {
+	if err := validateHostPort(o.ListenBase); err != nil {
 		return fmt.Errorf("ListenBase 非法: %w", err)
 	}
 	if o.StateDir == "" {
@@ -158,11 +159,16 @@ func (o Options) Validate() error {
 	default:
 		return fmt.Errorf("DialTransport %q 非法, 仅支持 %s/%s", o.DialTransport, TransportSOCKS5, TransportHTTP)
 	}
+	for _, ep := range o.Endpoints {
+		if err := validateHostPort(ep); err != nil {
+			return fmt.Errorf("Endpoint %q 非法: %w", ep, err)
+		}
+	}
 	return nil
 }
 
-// validateListenBase 校验 host:port 形态且端口在合法区间
-func validateListenBase(s string) error {
+// validateHostPort 校验 host:port 形态且端口在合法区间
+func validateHostPort(s string) error {
 	_, portStr, err := net.SplitHostPort(s)
 	if err != nil {
 		return fmt.Errorf("解析 host:port 失败: %w", err)

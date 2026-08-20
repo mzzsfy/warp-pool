@@ -106,6 +106,8 @@ type instConfig struct {
 	id           ID
 	proxyAddr    string
 	statePath    string
+	endpoints    []string // endpoint 轮换池(空为全程自动选优)
+	endpointIdx  int      // 初始 endpoint 下标(按创建序轮询错开)
 	factory      amzwrap.Factory
 	prober       Prober
 	probeTimeout time.Duration
@@ -124,6 +126,7 @@ type instance struct {
 	createdAt time.Time
 	proxyAddr string
 	statePath string
+	endpoints []string
 
 	factory      amzwrap.Factory
 	prober       Prober
@@ -154,6 +157,7 @@ type instance struct {
 	client   amzwrap.Client
 	gen      uint64
 	backoffN int
+	epIdx    int
 	pending  []command
 }
 
@@ -165,6 +169,8 @@ func newInstance(parent context.Context, cfg instConfig) *instance {
 		createdAt:    time.Now(),
 		proxyAddr:    cfg.proxyAddr,
 		statePath:    cfg.statePath,
+		endpoints:    cfg.endpoints,
+		epIdx:        cfg.endpointIdx,
 		factory:      cfg.factory,
 		prober:       cfg.prober,
 		probeTimeout: cfg.probeTimeout,
@@ -410,6 +416,7 @@ func (in *instance) ensureClient(keepState bool, firstDelay time.Duration) bool 
 		in.closeClient()
 		if !keepState {
 			in.removeState()
+			in.nextEndpoint()
 		}
 		if delay > 0 && !in.waitBackoff(delay) {
 			return false
@@ -435,7 +442,7 @@ func (in *instance) startUnderSem() (client amzwrap.Client, ok bool) {
 		return nil, false
 	}
 	defer in.releaseSem()
-	c, err := in.factory.NewClient(in.statePath, in.proxyAddr, in.logger)
+	c, err := in.factory.NewClient(in.statePath, in.proxyAddr, in.currentEndpoint(), in.logger)
 	if err == nil {
 		err = in.startClient(c)
 	}
@@ -489,6 +496,19 @@ func (in *instance) removeState() {
 	if err := os.Remove(in.statePath); err != nil && !os.IsNotExist(err) {
 		in.logger.Printf("实例 %s 删除 state 失败: %v", in.id, err)
 	}
+}
+
+// currentEndpoint 当前绑定 endpoint(轮换池为空时自动选优)
+func (in *instance) currentEndpoint() string {
+	if len(in.endpoints) == 0 {
+		return ""
+	}
+	return in.endpoints[in.epIdx%len(in.endpoints)]
+}
+
+// nextEndpoint 轮换到下一个 endpoint(仅随换身份重播推进)
+func (in *instance) nextEndpoint() {
+	in.epIdx++
 }
 
 // backoffDelay 计算并推进当前指数退避时长

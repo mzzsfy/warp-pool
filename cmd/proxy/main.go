@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -42,20 +43,25 @@ func main() {
 		maxN      = flag.Int("max", defaultMax, "实例数上限")
 		stateDir  = flag.String("state", defaultStateDir, "实例 state 目录")
 		transport = flag.String("transport", string(warppool.TransportSOCKS5), "拨号传输方式(socks5/http)")
+		endpoints = flag.String("endpoints", "", "endpoint 列表(逗号分隔 host:port,空为自动选优),实例轮询绑定,重播轮换")
 	)
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	pool, err := warppool.New(warppool.Options{
+	opts := warppool.Options{
 		Min:           *minN,
 		Max:           *maxN,
 		StateDir:      *stateDir,
 		DialTransport: warppool.DialTransport(*transport),
 		Logger:        log.Default(),
 		DedupeKeyer:   warppool.DedupeByBoth{},
-	})
+	}
+	if *endpoints != "" {
+		opts.Endpoints = strings.Split(*endpoints, ",")
+	}
+	pool, err := warppool.New(opts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -71,6 +77,9 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("代理监听 %s, 实例 %d-%d, 传输 %s, state %s", *listen, *minN, *maxN, *transport, *stateDir)
+	if len(opts.Endpoints) > 0 {
+		log.Printf("endpoint 轮询: %v", opts.Endpoints)
+	}
 
 	go statusLoop(ctx, pool)
 	go func() {

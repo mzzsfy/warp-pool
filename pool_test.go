@@ -86,9 +86,9 @@ func newPoolForTest(t *testing.T, mut func(o *Options)) *poolEnv {
 		prober: &stubProber{results: map[string]Egress{}},
 		health: &stubHealth{},
 	}
-	factory := fakeamz.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	factory := fakeamz.FakeFactory{New: func(storagePath, listenAddr, endpoint string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		_, statErr := os.Stat(storagePath)
-		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr), statePath: storagePath}
+		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr, endpoint), statePath: storagePath}
 		env.mu.Lock()
 		env.clients = append(env.clients, c.FakeClient)
 		env.stateAtNew = append(env.stateAtNew, statErr == nil)
@@ -100,6 +100,7 @@ func newPoolForTest(t *testing.T, mut func(o *Options)) *poolEnv {
 		Max:                 1,
 		ListenBase:          testListenBase,
 		StateDir:            t.TempDir(),
+		DedupeKeyer:         DedupeByV4{}, // 测试出口数据仅 V4,显式固定键策略
 		EgressProbeV4URL:    "http://v4",
 		EgressProbeV6URL:    "http://v6",
 		HealthInterval:      testHealthInterval,
@@ -675,4 +676,89 @@ func (p *pool) dumpStatus() string {
 		fmt.Fprintf(&b, " [%s %s]", v.id, v.status())
 	}
 	return b.String()
+}
+
+// Given Endpoints 非空 When 池拉起多实例 Then 按创建序轮询绑定不同 endpoint
+func TestPool_Endpoints_AssignedByCreationOrder(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 2, 2
+		o.Endpoints = []string{"162.159.192.1:2408", "162.159.193.10:500"}
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.setResult("127.0.0.1:12001", egBySeq(2))
+	env.waitNormalCount(2)
+	eps := []string{"162.159.192.1:2408", "162.159.193.10:500"}
+	for _, c := range env.clientsSnapshot() {
+		off := 0
+		switch c.ListenAddress() {
+		case "127.0.0.1:12000":
+			off = 0
+		case "127.0.0.1:12001":
+			off = 1
+		default:
+			t.Fatalf("未知监听地址 %s", c.ListenAddress())
+		}
+		if ep := c.Endpoint(); ep != eps[off] {
+			t.Fatalf("监听 %s 应绑定 %s, 实际 %s", c.ListenAddress(), eps[off], ep)
+		}
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given Endpoints 为空 When 实例创建 Then endpoint 为空串(自动选优)
+func TestPool_Endpoints_EmptyList_AutoSelect(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, nil)
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	if ep := env.clientsSnapshot()[0].Endpoint(); ep != "" {
+		t.Fatalf("空列表应自动选优, 实际 %q", ep)
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 单元素 Endpoints When 实例数超过列表长度 Then 轮询复用同一 endpoint
+func TestPool_Endpoints_ShorterThanInstances_ReuseByModulo(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 3, 3
+		o.Endpoints = []string{"162.159.192.1:2408"}
+	})
+	for i, addr := range []string{"127.0.0.1:12000", "127.0.0.1:12001", "127.0.0.1:12002"} {
+		env.setResult(addr, egBySeq(i+1))
+	}
+	env.waitNormalCount(3)
+	for _, c := range env.clientsSnapshot() {
+		if ep := c.Endpoint(); ep != "162.159.192.1:2408" {
+			t.Fatalf("全部实例应绑定唯一 endpoint, 实际 %q", ep)
+		}
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 实例已绑定某 endpoint When 手动排空触发重播 Then 重建客户端轮换到下一个 endpoint
+func TestPool_Endpoints_ReplayRotatesToNext(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 2, 2
+		o.Endpoints = []string{"10.0.0.1:2408", "10.0.0.2:2408"}
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.setResult("127.0.0.1:12001", egBySeq(2))
+	env.waitNormalCount(2)
+	if err := env.p.setStatus("0", StatusDraining); err != nil {
+		t.Fatalf("排空失败: %v", err)
+	}
+	waitClientCount(t, env, 3)
+	env.waitNormalCount(2)
+	snap := env.clientsSnapshot()
+	if ep := snap[len(snap)-1].Endpoint(); ep != "10.0.0.2:2408" {
+		t.Fatalf("重播后应轮换到下一个 endpoint, 实际 %q", ep)
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
 }

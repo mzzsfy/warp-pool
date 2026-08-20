@@ -96,17 +96,18 @@ func newDialEnv(t testing.TB, min, max int, mut func(*warppool.Options)) *dialEn
 		t.Fatalf("启动目标服务失败: %v", err)
 	}
 	env.target = ln
-	factory := fakeamz.FakeFactory{New: func(_, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	factory := fakeamz.FakeFactory{New: func(_, listenAddr, endpoint string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		if err := env.resetServer(listenAddr); err != nil {
 			return nil, err
 		}
-		return fakeamz.NewFakeClient(listenAddr), nil
+		return fakeamz.NewFakeClient(listenAddr, endpoint), nil
 	}}
 	opts := warppool.Options{
 		Min:                 min,
 		Max:                 max,
 		ListenBase:          addrOf(0),
 		StateDir:            t.TempDir(),
+		DedupeKeyer:         warppool.DedupeByV4{}, // 测试出口数据仅 V4,显式固定键策略
 		EgressProbeV4URL:    "http://v4",
 		EgressProbeV6URL:    "http://v6",
 		HealthInterval:      intervalOff,

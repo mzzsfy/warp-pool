@@ -116,7 +116,7 @@ type DedupeKeyer interface {
 	Key(Egress) string
 }
 
-// DedupeByV4 以 V4 文本为键(默认策略)
+// DedupeByV4 以 V4 文本为键
 type DedupeByV4 struct{}
 
 // Key V4 零值或字段非 v4 地址时返回空

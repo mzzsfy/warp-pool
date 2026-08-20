@@ -41,21 +41,22 @@ type Client interface {
 
 // Factory 创建 amz 客户端的工厂
 type Factory interface {
-	// NewClient 创建绑定 state 存储与监听地址的客户端
-	NewClient(storagePath, listenAddr string, logger Logger) (Client, error)
+	// NewClient 创建绑定 state 存储、监听地址与 endpoint 的客户端;endpoint 空为自动选优
+	NewClient(storagePath, listenAddr, endpoint string, logger Logger) (Client, error)
 }
 
 // DefaultFactory 真实 amz 客户端工厂(HTTP+SOCKS5 双协议)
 type DefaultFactory struct{}
 
 // NewClient 创建真实 amz 客户端
-func (DefaultFactory) NewClient(storagePath, listenAddr string, logger Logger) (Client, error) {
+func (DefaultFactory) NewClient(storagePath, listenAddr, endpoint string, logger Logger) (Client, error) {
 	inner, err := amz.NewClient(amz.Options{
-		Storage: amz.StorageOptions{Path: storagePath},
-		Listen:  amz.ListenOptions{Address: listenAddr},
-		HTTP:    amz.HTTPOptions{Enabled: true},
-		SOCKS5:  amz.SOCKS5Options{Enabled: true},
-		Logger:  logger,
+		Storage:   amz.StorageOptions{Path: storagePath},
+		Listen:    amz.ListenOptions{Address: listenAddr},
+		Transport: amz.TransportOptions{Endpoint: endpoint},
+		HTTP:      amz.HTTPOptions{Enabled: true},
+		SOCKS5:    amz.SOCKS5Options{Enabled: true},
+		Logger:    logger,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("创建 amz 客户端失败: %w", err)

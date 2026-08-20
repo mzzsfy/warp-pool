@@ -15,6 +15,7 @@ type FakeClient struct {
 	CloseErr error // Close 返回的错误
 
 	listenAddr string
+	endpoint   string
 	stop       chan struct{}
 	closeOnce  sync.Once
 
@@ -24,9 +25,16 @@ type FakeClient struct {
 	closed  bool
 }
 
-// NewFakeClient 创建监听地址为 listenAddr 的假客户端
-func NewFakeClient(listenAddr string) *FakeClient {
-	return &FakeClient{listenAddr: listenAddr, stop: make(chan struct{})}
+// NewFakeClient 创建监听地址为 listenAddr、绑定 endpoint 的假客户端
+func NewFakeClient(listenAddr, endpoint string) *FakeClient {
+	return &FakeClient{listenAddr: listenAddr, endpoint: endpoint, stop: make(chan struct{})}
+}
+
+// Endpoint 创建时绑定的 endpoint(空为自动选优)
+func (c *FakeClient) Endpoint() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.endpoint
 }
 
 // Start 实现 Client;StartErr 非空时不进入运行态
@@ -89,13 +97,13 @@ func (c *FakeClient) Closed() bool {
 
 // FakeFactory 假工厂:New 非 nil 时交由注入函数构造,否则创建默认 FakeClient
 type FakeFactory struct {
-	New func(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error)
+	New func(storagePath, listenAddr, endpoint string, logger amzwrap.Logger) (amzwrap.Client, error)
 }
 
 // NewClient 实现 Factory
-func (f FakeFactory) NewClient(storagePath, listenAddr string, logger amzwrap.Logger) (amzwrap.Client, error) {
+func (f FakeFactory) NewClient(storagePath, listenAddr, endpoint string, logger amzwrap.Logger) (amzwrap.Client, error) {
 	if f.New != nil {
-		return f.New(storagePath, listenAddr, logger)
+		return f.New(storagePath, listenAddr, endpoint, logger)
 	}
-	return NewFakeClient(listenAddr), nil
+	return NewFakeClient(listenAddr, endpoint), nil
 }

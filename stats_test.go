@@ -45,6 +45,7 @@ func newReplayPool(t *testing.T) (*warppool.Pool, *gateProber) {
 		Max:                 1,
 		ListenBase:          net.JoinHostPort("127.0.0.1", strconv.Itoa(statsBasePort)),
 		StateDir:            t.TempDir(),
+		DedupeKeyer:         warppool.DedupeByV4{}, // 测试出口数据仅 V4,显式固定键策略
 		EgressProbeV4URL:    "http://v4",
 		EgressProbeV6URL:    "http://v6",
 		HealthInterval:      intervalOff,

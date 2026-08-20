@@ -7,7 +7,7 @@
 ## 特性
 
 - 同进程多 WARP 实例,自动注册、选点、重连(amz 提供)
-- 出口 IP 双栈探测(v4/v6),池内唯一性硬约束:DedupeKeyer 去重策略(默认 v4),重复必重播(删 state 重注册)
+- 出口 IP 双栈探测(v4/v6),池内唯一性硬约束:DedupeKeyer 去重策略(默认 v6),重复必重播(删 state 重注册)
 - 常驻 min 个 Normal 实例;总数上限 max;达 max 时按淘汰策略腾位(排队背压 / 杀最老)
 - 实例状态机:Draining 不接新请求、超时强断在途连接并重播换 IP;Disabled 摘除待手动恢复
 - 拨号 API 标准签名,可直接作 `http.Transport.DialContext`;亲和拨号同 key 稳定粘实例
@@ -69,7 +69,7 @@ func main() {
 | ListenBase | 127.0.0.1:51367 | 实例代理监听起点(base+i 逐实例递增) |
 | StateDir | ./warp-state | 实例 state 目录(amz 注册态,重播即删) |
 | Evictor | EvictNone | 达 max 淘汰策略:排队背压 / EvictOldest 杀最老 |
-| DedupeKeyer | DedupeByV4 | 出口去重键:DedupeByV4 / DedupeByV6 / DedupeByBoth |
+| DedupeKeyer | DedupeByV6 | 出口去重键:DedupeByV4 / DedupeByV6 / DedupeByBoth(v6 唯一性最好;纯 v4 环境请改 ByV4/ByBoth) |
 | EgressProbeV4URL / V6URL | api4/api6.ipify.org | 出口探测服务 |
 | HealthInterval / HealthTimeout | 30s / 10s | 健康检查周期 / 单次超时 |
 | EgressCheckInterval | 5min | 出口 IP 巡检周期 |
@@ -77,7 +77,18 @@ func main() {
 | ReplayBackoffStart / Max | 1s / 60s | 重播退避起点 / 上限 |
 | ReplayConcurrency | 1 | 全局重播并发 |
 | DialTransport | socks5 | 拨号传输:socks5 / http(经实例 listener 的 CONNECT 隧道) |
+| Endpoints | 自动选优 | 实例 endpoint(`host:port`)列表;空为 amz 自动选优,非空按创建序轮询分配,重播时轮换下一个 |
 | Logger | 静默 | `Printf(string, ...any)` 接口 |
+
+### 出口 IP 多样性
+
+WARP 免费版 IPv4 出口为机房级共享 NAT:全池实例自动选优时大概率落同一机房、同一批 IPv4。
+IPv6 出口为每设备唯一,`DedupeByV6`/`DedupeByBoth` 下天然互异。要分散 IPv4,配置
+`Endpoints` 让实例分别绑定不同机房(列表可从 WARP 官方 endpoint 段挑选):
+
+```go
+warppool.Options{Endpoints: []string{"162.159.192.1:2408", "162.159.193.10:500"}}
+```
 
 ## 测试
 
@@ -94,6 +105,7 @@ go test -run xxx -bench . -benchmem   # 性能基准(并发拨号项建议 -benc
 ```bash
 go run ./cmd/proxy                          # 默认 127.0.0.1:8080, 实例 2-2, socks5 传输
 go run ./cmd/proxy -listen 127.0.0.1:8080 -min 2 -max 4 -transport http -state ./warp-state
+go run ./cmd/proxy -endpoints 162.159.192.1:2408,162.159.193.10:500   # 实例分机房绑定
 
 curl -x http://127.0.0.1:8080 https://api4.ipify.org   # 经池出口, 多次请求观察轮换
 ```

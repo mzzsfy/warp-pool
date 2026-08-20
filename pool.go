@@ -266,12 +266,15 @@ func (p *pool) createInstance() bool {
 		p.opts.Logger.Printf("端口段耗尽, 无法新建实例")
 		return false
 	}
-	id := ID(strconv.Itoa(p.nextSeq))
+	seq := p.nextSeq
 	p.nextSeq++
+	id := ID(strconv.Itoa(seq))
 	in := newInstance(p.ctx, instConfig{
 		id:           id,
 		proxyAddr:    addr,
 		statePath:    filepath.Join(p.opts.StateDir, fmt.Sprintf(stateFileFormat, id)),
+		endpoints:    p.opts.Endpoints,
+		endpointIdx:  seq,
 		factory:      p.factory,
 		prober:       p.prober,
 		probeTimeout: p.opts.HealthTimeout,

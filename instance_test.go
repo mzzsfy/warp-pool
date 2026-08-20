@@ -84,13 +84,14 @@ func (c *fileClient) Start(ctx context.Context) error {
 
 // instEnv 单实例测试环境:fake 工厂落盘模拟 + 事件通道 + 信号量
 type instEnv struct {
-	t        *testing.T
-	prober   *stubProber
-	events   chan event
-	sem      chan struct{}
-	factory  fakeamz.FakeFactory
-	stateDir string
-	stats    poolStats
+	t         *testing.T
+	prober    *stubProber
+	events    chan event
+	sem       chan struct{}
+	factory   fakeamz.FakeFactory
+	stateDir  string
+	endpoints []string
+	stats     poolStats
 
 	mu         sync.Mutex
 	clients    []*fakeamz.FakeClient
@@ -108,9 +109,9 @@ func newInstEnv(t *testing.T, results map[string]Egress) *instEnv {
 		stateDir:  t.TempDir(),
 		startErrs: map[string]error{},
 	}
-	env.factory = fakeamz.FakeFactory{New: func(storagePath, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	env.factory = fakeamz.FakeFactory{New: func(storagePath, listenAddr, endpoint string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		_, statErr := os.Stat(storagePath)
-		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr), statePath: storagePath}
+		c := &fileClient{FakeClient: fakeamz.NewFakeClient(listenAddr, endpoint), statePath: storagePath}
 		env.mu.Lock()
 		seq := len(env.clients)
 		env.clients = append(env.clients, c.FakeClient)
@@ -163,6 +164,7 @@ func (e *instEnv) startInst(id ID, proxyAddr string) *instance {
 		id:           id,
 		proxyAddr:    proxyAddr,
 		statePath:    filepath.Join(e.stateDir, fmt.Sprintf(stateFileName, id)),
+		endpoints:    e.endpoints,
 		factory:      e.factory,
 		prober:       e.prober,
 		probeTimeout: testProbeTimeout,
@@ -545,7 +547,7 @@ func TestInstance_ReplaySerializedBySemaphore(t *testing.T) {
 	before := runtime.NumGoroutine()
 	var mu sync.Mutex
 	inReg, maxReg := 0, 0
-	slowNew := func(_, listenAddr string, _ amzwrap.Logger) (amzwrap.Client, error) {
+	slowNew := func(_, listenAddr, endpoint string, _ amzwrap.Logger) (amzwrap.Client, error) {
 		mu.Lock()
 		inReg++
 		if inReg > maxReg {
@@ -556,7 +558,7 @@ func TestInstance_ReplaySerializedBySemaphore(t *testing.T) {
 		mu.Lock()
 		inReg--
 		mu.Unlock()
-		return fakeamz.NewFakeClient(listenAddr), nil
+		return fakeamz.NewFakeClient(listenAddr, endpoint), nil
 	}
 	env := newInstEnv(t, map[string]Egress{})
 	env.factory = fakeamz.FakeFactory{New: slowNew}
@@ -580,5 +582,43 @@ func TestInstance_ReplaySerializedBySemaphore(t *testing.T) {
 
 	stopInst(t, in1)
 	stopInst(t, in2)
+	waitNoLeak(t, before)
+}
+
+// Given 实例绑定 endpoint When 保留身份路径重建客户端(禁用启用/失联重连) Then endpoint 不轮换
+func TestInstance_KeepStatePaths_DoNotRotateEndpoint(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newInstEnv(t, map[string]Egress{})
+	env.endpoints = []string{"10.0.0.1:2408", "10.0.0.2:2408"}
+	in := env.startInst("1", ":1")
+	env.waitEvent(evReady)
+	in.send(command{kind: cmdConfirm})
+	waitStatus(t, in, StatusNormal)
+	if ep := env.client(0).Endpoint(); ep != "10.0.0.1:2408" {
+		t.Fatalf("初始应绑定首个 endpoint, 实际 %q", ep)
+	}
+
+	in.send(command{kind: cmdDisable})
+	waitStatus(t, in, StatusDisabled)
+	in.send(command{kind: cmdEnable})
+	waitClientCount(t, env, 2)
+	env.waitEvent(evReady)
+	if ep := env.client(1).Endpoint(); ep != "10.0.0.1:2408" {
+		t.Fatalf("保留身份重建不应轮换 endpoint, 实际 %q", ep)
+	}
+
+	// 失联重连同为保留身份路径,不轮换
+	in.send(command{kind: cmdConfirm})
+	waitStatus(t, in, StatusNormal)
+	if err := env.client(1).Close(); err != nil {
+		t.Fatalf("关闭客户端失败: %v", err)
+	}
+	waitClientCount(t, env, 3)
+	env.waitEvent(evReady)
+	if ep := env.client(2).Endpoint(); ep != "10.0.0.1:2408" {
+		t.Fatalf("失联重连不应轮换 endpoint, 实际 %q", ep)
+	}
+
+	stopInst(t, in)
 	waitNoLeak(t, before)
 }
