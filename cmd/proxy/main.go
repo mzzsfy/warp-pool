@@ -21,8 +21,8 @@ import (
 // 默认配置
 const (
 	defaultProxyListen = "127.0.0.1:8080"
-	defaultMin         = 2
-	defaultMax         = 2
+	defaultMin         = 1
+	defaultMax         = 4
 	defaultStateDir    = "./warp-state"
 	statusInterval     = 30 * time.Second
 	shutdownGrace      = 10 * time.Second
@@ -54,6 +54,7 @@ func main() {
 		StateDir:      *stateDir,
 		DialTransport: warppool.DialTransport(*transport),
 		Logger:        log.Default(),
+		DedupeKeyer:   warppool.DedupeByBoth{},
 	})
 	if err != nil {
 		log.Fatal(err)

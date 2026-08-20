@@ -141,10 +141,10 @@ func (DedupeByV6) Key(e Egress) string {
 // DedupeByBoth 以 V4 与 V6 文本拼接为键
 type DedupeByBoth struct{}
 
-// Key 双栈均有效时返回 "v4|v6" 拼接,任一栈缺失返回空
+// Key 任一栈有效即返回 "v4|v6" 拼接(缺失侧为空段),双栈全空返回空
 func (DedupeByBoth) Key(e Egress) string {
 	v4, v6 := DedupeByV4{}.Key(e), DedupeByV6{}.Key(e)
-	if v4 == "" || v6 == "" {
+	if v4 == "" && v6 == "" {
 		return ""
 	}
 	return v4 + dedupeKeySep + v6

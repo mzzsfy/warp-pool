@@ -34,8 +34,8 @@ func TestDedupeKeyers(t *testing.T) {
 		{"V6有效返回文本", warppool.DedupeByV6{}, warppool.Egress{V6: v6}, "2001:db8::1"},
 		{"V6字段存v4地址返回空", warppool.DedupeByV6{}, warppool.Egress{V6: v4}, ""},
 		{"Both全零返回空", warppool.DedupeByBoth{}, warppool.Egress{}, ""},
-		{"Both缺V4返回空", warppool.DedupeByBoth{}, warppool.Egress{V6: v6}, ""},
-		{"Both缺V6返回空", warppool.DedupeByBoth{}, warppool.Egress{V4: v4}, ""},
+		{"Both缺V4以空段拼接", warppool.DedupeByBoth{}, warppool.Egress{V6: v6}, "|2001:db8::1"},
+		{"Both缺V6以空段拼接", warppool.DedupeByBoth{}, warppool.Egress{V4: v4}, "203.0.113.7|"},
 		{"Both双栈有效返回拼接", warppool.DedupeByBoth{}, warppool.Egress{V4: v4, V6: v6}, "203.0.113.7|2001:db8::1"},
 	}
 
