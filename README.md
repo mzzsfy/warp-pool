@@ -73,7 +73,7 @@ func main() {
 | EgressProbeV4URL / V6URL | api4/api6.ipify.org | 出口探测服务 |
 | HealthInterval / HealthTimeout | 30s / 10s | 健康检查周期 / 单次超时 |
 | EgressCheckInterval | 5min | 出口 IP 巡检周期 |
-| DrainTimeout | 60s | Draining 强断在途连接的超时 |
+| DrainTimeout | 10s | Draining 强断在途连接的超时 |
 | ReplayBackoffStart / Max | 1s / 60s | 重播退避起点 / 上限 |
 | ReplayConcurrency | 1 | 全局重播并发 |
 | DialTransport | socks5 | 拨号传输:socks5 / http(经实例 listener 的 CONNECT 隧道) |
