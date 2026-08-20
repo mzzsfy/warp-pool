@@ -22,7 +22,7 @@ const (
 	defaultHealthInterval      = 30 * time.Second
 	defaultHealthTimeout       = 10 * time.Second
 	defaultEgressCheckInterval = 5 * time.Minute
-	defaultDrainTimeout        = 60 * time.Second
+	defaultDrainTimeout        = 10 * time.Second
 	defaultReplayBackoffStart  = 1 * time.Second
 	defaultReplayBackoffMax    = 60 * time.Second
 	defaultReplayConcurrency   = 1
