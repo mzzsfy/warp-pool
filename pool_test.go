@@ -182,6 +182,24 @@ func (e *poolEnv) waitTotalCount(n int) {
 	}
 }
 
+// waitInstStatus 等待指定实例达到期望状态
+func (e *poolEnv) waitInstStatus(id ID, s Status) {
+	e.t.Helper()
+	deadline := time.After(testWaitDeadline)
+	for {
+		for _, v := range e.p.snapshot() {
+			if v.id == id && v.status() == s {
+				return
+			}
+		}
+		select {
+		case <-deadline:
+			e.t.Fatalf("等待实例 %s 状态 %v 超时: %s", id, s, e.p.dumpStatus())
+		case <-time.After(time.Millisecond):
+		}
+	}
+}
+
 // normalViews 返回当前 Normal 实例视图
 func (e *poolEnv) normalViews() []instanceView {
 	var out []instanceView
@@ -428,6 +446,15 @@ func TestPool_UniquenessCollisionReplaysNewer(t *testing.T) {
 	env.setResult("127.0.0.1:12000", same)
 	env.setResult("127.0.0.1:12001", same)
 	env.waitNormalCount(1)
+	// 等冲突重播发生后再换出口:直接换可能被未完成初探的实例取走,冲突场景不成立(flaky)
+	deadline := time.After(testWaitDeadline)
+	for env.p.stats.replays.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("等待冲突重播超时: %s", env.p.dumpStatus())
+		case <-time.After(time.Millisecond):
+		}
+	}
 
 	// 先就绪者保持 Normal,后到者(动态识别)冲突重播;给予唯一出口后转 Normal
 	first := env.normalViews()[0]
@@ -858,6 +885,141 @@ func TestPool_EmptyKeyWhitelist_EgressCheckKeepsNormal(t *testing.T) {
 			t.Fatal("双栈全死应排空重播自愈")
 		case <-time.After(time.Millisecond):
 		}
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given CredentialSource 返回有效凭据 When 实例创建 Then 客户端建立前 state 已按凭据写入(复用路径)
+func TestPool_CredentialSource_InjectsBeforeClient(t *testing.T) {
+	before := runtime.NumGoroutine()
+	src := &stubCredentialSource{creds: []*Credential{validCred("dev-1")}}
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.CredentialSource = src
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	if n := src.callCount(); n != 1 {
+		t.Fatalf("创建时应 Acquire 一次, 实际 %d", n)
+	}
+	if !env.stateAtNewFlag(0) {
+		t.Fatal("凭据注入后客户端建立时 state 应已存在")
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given CredentialSource 返回 nil When 实例创建 Then 不写 state(匿名注册,现行为)
+func TestPool_CredentialSource_NilCredential_StaysAnonymous(t *testing.T) {
+	before := runtime.NumGoroutine()
+	src := &stubCredentialSource{}
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.CredentialSource = src
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	if env.stateAtNewFlag(0) {
+		t.Fatal("Acquire 返回 nil 不应写 state")
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 实例冲突重播 When 重播取新身份 Then 再次 Acquire 且新凭据写入
+func TestPool_CredentialSource_ReplayAcquiresNewCredential(t *testing.T) {
+	before := runtime.NumGoroutine()
+	src := &stubCredentialSource{creds: []*Credential{validCred("dev-1"), validCred("dev-2")}}
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.CredentialSource = src
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	if err := env.p.setStatus("0", StatusDraining); err != nil {
+		t.Fatalf("排空失败: %v", err)
+	}
+	waitClientCount(t, env, 2)
+	env.waitNormalCount(1)
+	if n := src.callCount(); n < 2 {
+		t.Fatalf("重播应再次 Acquire, 实际 %d 次", n)
+	}
+	if !env.stateAtNewFlag(1) {
+		t.Fatal("重播后凭据注入,客户端建立时 state 应已存在")
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// stateAtNewFlag 第 n 次创建客户端时 state 是否已存在
+func (e *poolEnv) stateAtNewFlag(n int) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.stateAtNew[n]
+}
+
+// Given 凭据实例失联重连与禁用恢复 When state 未删 Then 均复用身份不重复 Acquire
+func TestPool_CredentialSource_ReconnectKeepsCredential(t *testing.T) {
+	before := runtime.NumGoroutine()
+	src := &stubCredentialSource{creds: []*Credential{validCred("dev-1")}}
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.CredentialSource = src
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+
+	// 失联重连:state 仍在,复用身份
+	if err := env.client(0).Close(); err != nil {
+		t.Fatalf("外部关闭客户端失败: %v", err)
+	}
+	waitClientCount(t, env, 2)
+	env.waitNormalCount(1)
+
+	// 禁用后启用:state 未删,复用身份
+	if err := env.p.setStatus("0", StatusDisabled); err != nil {
+		t.Fatalf("禁用失败: %v", err)
+	}
+	env.waitInstStatus("0", StatusDisabled)
+	if err := env.p.setStatus("0", StatusNormal); err != nil {
+		t.Fatalf("启用失败: %v", err)
+	}
+	waitClientCount(t, env, 3)
+	env.waitNormalCount(1)
+
+	if n := src.callCount(); n != 1 {
+		t.Fatalf("重连/启用应复用身份不重复取号, 实际 %d 次", n)
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 凭据源持续故障 When 实例取号 Then 退避重试不 panic 不终态,恢复后转 Normal
+func TestPool_CredentialSource_SourceError_RetriesWithBackoff(t *testing.T) {
+	before := runtime.NumGoroutine()
+	src := &stubCredentialSource{err: os.ErrClosed}
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.CredentialSource = src
+	})
+	// 故障期保持重试,实例不终态;重试受退避节流(最坏按最小退避间隔连发,超出即狂刷)
+	deadline := time.Now().Add(testPoolBackoffMax * 3)
+	for time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := len(env.p.snapshot()); n != 1 {
+		t.Fatalf("取号失败实例不应消失, 实际 %d 个", n)
+	}
+	if n := src.callCount(); n > int(testPoolBackoffMax*3/testPoolBackoff)+2 {
+		t.Fatalf("重试应受退避节流, 调用 %d 次", n)
+	}
+	// 源恢复后放号,实例正常转 Normal
+	src.recover(validCred("dev-late"))
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	if n := src.callCount(); n < 2 {
+		t.Fatalf("退避后应再次 Acquire, 实际 %d 次", n)
 	}
 	env.p.Close()
 	waitNoLeak(t, before)

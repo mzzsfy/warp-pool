@@ -13,6 +13,6 @@
 | 关闭 | api | `Close() error` | 无 | error | N/A | 业务 |
 | 连接实例信息 | dial | `InstanceConn.Instance() InstanceInfo` | 无 | ID/Status/Egress | N/A | 业务(断言后调用) |
 
-数据类型:Options(api)、InstanceInfo/InstanceConn(dial)、Status/ID(instance)、Egress/Prober/HTTPProber(egress)、Evictor/EvictNone/EvictOldest(eviction)、DedupeKeyer/DedupeByV4/DedupeByV6/DedupeByBoth(egress)、Logger(api)、ErrNoInstance/ErrInvalidTransition/ErrClosed(api)。
+数据类型:Options(api)、InstanceInfo/InstanceConn(dial)、Status/ID(instance)、Egress/Prober/HTTPProber(egress)、Evictor/EvictNone/EvictOldest(eviction)、DedupeKeyer/DedupeByV4/DedupeByV6/DedupeByBoth(egress)、Credential/CredentialSource/ErrIncompleteCredential(api,身份注入钩子)、Logger(api)、ErrNoInstance/ErrInvalidTransition/ErrClosed(api)。
 
 一致性检查:命名与标准库 DialContext 签名一致;策略类型名词式;无重复接口;全部需求有对应公开符号,模块间调用全部落在内部,公开面无遗漏。

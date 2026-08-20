@@ -78,7 +78,33 @@ func main() {
 | ReplayConcurrency | 1 | 全局重播并发 |
 | DialTransport | socks5 | 拨号传输:socks5 / http(经实例 listener 的 CONNECT 隧道) |
 | Endpoints | 自动选优 | 实例 endpoint(`host:port`)列表;空为 amz 自动选优,非空按创建序轮询分配,重播时轮换下一个 |
+| CredentialSource | 匿名 | 身份供给钩子 `Acquire() (*Credential, error)`;实例 state 缺失(创建/重播)时取号,见下节 |
 | Logger | 静默 | `Printf(string, ...any)` 接口 |
+
+### 账号身份注入
+
+匿名注册的出口 IP 落在机房共享 NAT 池;要为实例绑定用户身份,实现 `CredentialSource`:
+
+```go
+pool, err := warppool.New(warppool.Options{
+    Min: 2, Max: 5,
+    CredentialSource: mySource, // 实现 Acquire() (*warppool.Credential, error)
+})
+```
+
+- `Credential` 三元组:`DeviceID` / `Token` / `PrivateKey`,与 amz state 文件字段一一对应
+- 实例每次需要新身份(state 缺失:创建或重播删 state 后)调用一次 `Acquire`;
+  返回 `nil` 即本次匿名注册,返回错误则退避重试
+- 实现契约:多实例并发调用 `Acquire`(须并发安全);须快速返回或自带超时,
+  阻塞会卡住该实例管理协程(Stop/Disable 均不可达);取号即消耗——凭据写盘后
+  启动重试或实例销毁都会删 state,凭据不回收、无归还钩子
+- 凭据格式:`PrivateKey` 须为 amz 签发的 secp256r1 ECDSA 私钥,base64(x509 DER)——
+  wgcf 等工具的 x25519 私钥不兼容;最可靠的来源是用 amz 匿名注册一次后从其 state
+  文件复制三元组,或用任何能产出 amz 兼容 state 的工具
+- 已失效凭据(如过期 Token)注入后,amz 侧会静默回退匿名注册并覆写 state——
+  库不拦截该行为,依赖有效凭据的场景请自行保证凭据新鲜度
+- Zero Trust 团队(Service Token)注册协议封装在官方 warp-svc 内,无公开 REST 端点,
+  纯 Go 路线不可达;需要团队身份时请先用官方客户端产出凭据再经此钩子注入
 
 ### 出口 IP 多样性
 

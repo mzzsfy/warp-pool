@@ -106,8 +106,9 @@ type instConfig struct {
 	id           ID
 	proxyAddr    string
 	statePath    string
-	endpoints    []string // endpoint 轮换池(空为全程自动选优)
-	endpointIdx  int      // 初始 endpoint 下标(按创建序轮询错开)
+	endpoints    []string         // endpoint 轮换池(空为全程自动选优)
+	endpointIdx  int              // 初始 endpoint 下标(按创建序轮询错开)
+	credSource   CredentialSource // 身份供给钩子(nil 为匿名)
 	factory      amzwrap.Factory
 	prober       Prober
 	probeTimeout time.Duration
@@ -122,11 +123,12 @@ type instConfig struct {
 
 // instance 单实例生命周期主体;状态写入仅发生在管理 goroutine,读端原子
 type instance struct {
-	id        ID
-	createdAt time.Time
-	proxyAddr string
-	statePath string
-	endpoints []string
+	id         ID
+	createdAt  time.Time
+	proxyAddr  string
+	statePath  string
+	endpoints  []string
+	credSource CredentialSource
 
 	factory      amzwrap.Factory
 	prober       Prober
@@ -171,6 +173,7 @@ func newInstance(parent context.Context, cfg instConfig) *instance {
 		statePath:    cfg.statePath,
 		endpoints:    cfg.endpoints,
 		epIdx:        cfg.endpointIdx,
+		credSource:   cfg.credSource,
 		factory:      cfg.factory,
 		prober:       cfg.prober,
 		probeTimeout: cfg.probeTimeout,
@@ -421,6 +424,12 @@ func (in *instance) ensureClient(keepState bool, firstDelay time.Duration) bool 
 		if delay > 0 && !in.waitBackoff(delay) {
 			return false
 		}
+		if err := in.provisionCredential(); err != nil {
+			in.logger.Printf("实例 %s 取号失败, 退避重试: %v", in.id, err)
+			keepState = false
+			delay = in.backoffDelay()
+			continue
+		}
 		c, ok := in.startUnderSem()
 		if !ok {
 			return false
@@ -433,6 +442,28 @@ func (in *instance) ensureClient(keepState bool, firstDelay time.Duration) bool 
 		keepState = false
 		delay = in.backoffDelay()
 	}
+}
+
+// provisionCredential state 缺失时向凭据源取号写入(实例随后复用该身份注册);
+// 返回错误仅当源故障/凭据非法,由调用方退避重试;nil 源或取到空凭据保持匿名注册
+func (in *instance) provisionCredential() error {
+	if in.credSource == nil {
+		return nil
+	}
+	if _, err := os.Stat(in.statePath); err == nil {
+		return nil
+	}
+	cred, err := in.credSource.Acquire()
+	if err != nil {
+		return fmt.Errorf("获取凭据: %w", err)
+	}
+	if cred == nil {
+		return nil
+	}
+	if err := writeCredentialState(in.statePath, cred); err != nil {
+		return fmt.Errorf("写入凭据 state: %w", err)
+	}
+	return nil
 }
 
 // startUnderSem 全局重播并发约束内建立并启动客户端;

@@ -283,6 +283,7 @@ func (p *pool) createInstance() bool {
 		statePath:    filepath.Join(p.opts.StateDir, fmt.Sprintf(stateFileFormat, id)),
 		endpoints:    p.opts.Endpoints,
 		endpointIdx:  seq,
+		credSource:   p.opts.CredentialSource,
 		factory:      p.factory,
 		prober:       p.prober,
 		probeTimeout: p.opts.HealthTimeout,

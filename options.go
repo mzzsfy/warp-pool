@@ -47,23 +47,24 @@ const (
 
 // Options 池全部可配项;零值字段在 New 时填充默认值
 type Options struct {
-	Min, Max            int           // 实例数下限/上限,必须 0 < Min <= Max <= 65535
-	ListenBase          string        // 实例 listener 端口起点(base+i)
-	StateDir            string        // 实例 state 目录
-	Evictor             Evictor       // 达上限时的淘汰策略;EvictNone 下缩容在实例自然退出后生效
-	DedupeKeyer         DedupeKeyer   // 出口去重键策略
-	EgressProbeV4URL    string        // V4 出口探测服务地址
-	EgressProbeV6URL    string        // V6 出口探测服务地址
-	HealthInterval      time.Duration // 周期健康检查间隔
-	HealthTimeout       time.Duration // 单次健康检查超时
-	EgressCheckInterval time.Duration // 出口巡检周期
-	DrainTimeout        time.Duration // Draining 强断在途连接的超时
-	ReplayBackoffStart  time.Duration // 重播退避起点
-	ReplayBackoffMax    time.Duration // 重播退避上限
-	ReplayConcurrency   int           // 全局重播并发
-	DialTransport       DialTransport // 拨号传输方式(socks5 默认 / http)
-	Endpoints           []string      // 实例 endpoint(host:port)列表;空为自动选优,非空按创建序轮询分配,重播时轮换
-	Logger              Logger        // 日志输出
+	Min, Max            int              // 实例数下限/上限,必须 0 < Min <= Max <= 65535
+	ListenBase          string           // 实例 listener 端口起点(base+i)
+	StateDir            string           // 实例 state 目录
+	Evictor             Evictor          // 达上限时的淘汰策略;EvictNone 下缩容在实例自然退出后生效
+	DedupeKeyer         DedupeKeyer      // 出口去重键策略
+	EgressProbeV4URL    string           // V4 出口探测服务地址
+	EgressProbeV6URL    string           // V6 出口探测服务地址
+	HealthInterval      time.Duration    // 周期健康检查间隔
+	HealthTimeout       time.Duration    // 单次健康检查超时
+	EgressCheckInterval time.Duration    // 出口巡检周期
+	DrainTimeout        time.Duration    // Draining 强断在途连接的超时
+	ReplayBackoffStart  time.Duration    // 重播退避起点
+	ReplayBackoffMax    time.Duration    // 重播退避上限
+	ReplayConcurrency   int              // 全局重播并发
+	DialTransport       DialTransport    // 拨号传输方式(socks5 默认 / http)
+	Endpoints           []string         // 实例 endpoint(host:port)列表;空为自动选优,非空按创建序轮询分配,重播时轮换
+	CredentialSource    CredentialSource // 身份供给钩子;nil 为匿名注册,非空时实例取新身份前调用
+	Logger              Logger           // 日志输出
 }
 
 // withDefaults 返回零值字段已填默认的副本
