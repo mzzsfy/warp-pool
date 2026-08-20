@@ -171,9 +171,17 @@ func (p *pool) handleEvent(ev event) {
 	}
 }
 
-// handleReady 唯一性判定:空 Key 重探测(超限重播)、冲突较新者重播、唯一确认转 Normal
+// handleReady 唯一性判定:空键白名单放行、空 Key 重探测(超限重播)、冲突较新者重播、唯一确认转 Normal
 func (p *pool) handleReady(in *instance, eg Egress) {
 	key := p.opts.DedupeKeyer.Key(eg)
+	if whitelistedEmptyKey(key, eg) {
+		// 空串登记仅为"已决"标记:不入 usedKeys,reconfirmProbing 据此补发确认
+		p.releaseKey(in.id)
+		delete(p.emptyByInst, in.id)
+		p.keysByInst[in.id] = ""
+		in.send(command{kind: cmdConfirm})
+		return
+	}
 	if key == "" {
 		if n := p.emptyByInst[in.id] + 1; n < probeFailLimit {
 			p.emptyByInst[in.id] = n
@@ -377,6 +385,11 @@ func (p *pool) applyEgress(in *instance, eg Egress, err error) {
 		if eg != (Egress{}) {
 			in.egressVal.Store(&eg)
 		}
+	}
+	if whitelistedEmptyKey(key, eg) {
+		// 白名单放行:释放旧键(或标记),保持 Normal
+		p.releaseKey(in.id)
+		return
 	}
 	if key == "" {
 		in.send(command{kind: cmdDrain, timeout: p.opts.DrainTimeout})

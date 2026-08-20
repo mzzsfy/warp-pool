@@ -69,7 +69,7 @@ func main() {
 | ListenBase | 127.0.0.1:51367 | 实例代理监听起点(base+i 逐实例递增) |
 | StateDir | ./warp-state | 实例 state 目录(amz 注册态,重播即删) |
 | Evictor | EvictNone | 达 max 淘汰策略:排队背压 / EvictOldest 杀最老 |
-| DedupeKeyer | DedupeByV6 | 出口去重键:DedupeByV4 / DedupeByV6 / DedupeByBoth(v6 唯一性最好;纯 v4 环境请改 ByV4/ByBoth) |
+| DedupeKeyer | DedupeByV6 | 出口去重键:DedupeByV4 / DedupeByV6 / DedupeByBoth(v6 唯一性最好)。空键白名单:探测已有有效栈但键策略取空(如纯 v4 环境配 ByV6)时豁免去重直接放行,不重播 |
 | EgressProbeV4URL / V6URL | api4/api6.ipify.org | 出口探测服务 |
 | HealthInterval / HealthTimeout | 30s / 10s | 健康检查周期 / 单次超时 |
 | EgressCheckInterval | 5min | 出口 IP 巡检周期 |

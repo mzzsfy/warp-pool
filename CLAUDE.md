@@ -43,6 +43,7 @@ go run ./cmd/proxy                    # 手动验收:本地 HTTP 代理包装池
 - 纯库,不提供 HTTP/SOCKS5 对外协议服务(`cmd/proxy` 仅测试用);不管理 TUN。
 - 无事件回调/订阅 API:不收敛场景走无限退避重试(`ReplayBackoffStart/Max`、`ReplayConcurrency` 可配),不引入通知通道。
 - 换 IP 唯一手段是删 state 重注册(重播);连接级重连无意义,Draining 超时即强断在途连接。
+- 空键白名单:探测已有有效栈但键策略取空(如纯 v4 环境配 ByV6)时豁免去重直接放行(`keysByInst[id]=""` 为标记,不入 `usedKeys`);全零出口仍走重探测→重播自愈。
 - 库只承诺池内出口 IP 唯一性,不承诺多样性(同机 IP 受 Cloudflare 分配约束)。
 
 ## 设计文档

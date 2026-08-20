@@ -762,3 +762,103 @@ func TestPool_Endpoints_ReplayRotatesToNext(t *testing.T) {
 	env.p.Close()
 	waitNoLeak(t, before)
 }
+
+// Given ByV6 键策略且实例仅有互异 V4 出口 When 探测上报 Then 空键白名单放行,双双 Normal 零重播
+func TestPool_EmptyKeyWhitelist_V4OnlyEnvironments_PassThrough(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 2, 2
+		o.DedupeKeyer = DedupeByV6{}
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.setResult("127.0.0.1:12001", egBySeq(2))
+	env.waitNormalCount(2)
+	if n := env.clientCount(); n != 2 {
+		t.Fatalf("白名单放行不应重播, 实际 %d 个客户端", n)
+	}
+	if r := env.p.stats.replays.Load(); r != 0 {
+		t.Fatalf("白名单放行不应计入重播, 实际 %d", r)
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given ByV6 键策略且两实例 V4 出口相同(键均为空) When 探测上报 Then 均放行,空键不去重不互斥
+func TestPool_EmptyKeyWhitelist_SameV4Egress_BothPass(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 2, 2
+		o.DedupeKeyer = DedupeByV6{}
+	})
+	same := egBySeq(1)
+	env.setResult("127.0.0.1:12000", same)
+	env.setResult("127.0.0.1:12001", same)
+	env.waitNormalCount(2)
+	if r := env.p.stats.replays.Load(); r != 0 {
+		t.Fatalf("空键相同不应互斥重播, 实际 %d 次", r)
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 全零出口(双栈探测失败) When 探测上报 Then 白名单不放行,保留重探测升级重播
+func TestPool_EmptyKeyWhitelist_AllZeroEgress_StillReplays(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.DedupeKeyer = DedupeByV6{}
+	})
+	// 不设探测结果: stub 返回全零
+	env.waitTotalCount(1)
+	deadline := time.After(testWaitDeadline)
+	for env.p.stats.replays.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("全零出口应升级重播")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}
+
+// Given 白名单 Normal 实例 When 巡检仍空键有效栈 Then 不排空零重播;巡检双栈全死 Then 排空自愈
+func TestPool_EmptyKeyWhitelist_EgressCheckKeepsNormal(t *testing.T) {
+	before := runtime.NumGoroutine()
+	env := newPoolForTest(t, func(o *Options) {
+		o.Min, o.Max = 1, 1
+		o.DedupeKeyer = DedupeByV6{}
+		o.EgressCheckInterval = testEgressInterval
+	})
+	env.setResult("127.0.0.1:12000", egBySeq(1))
+	env.waitNormalCount(1)
+	// 轮询确认巡检至少跑过一轮(初探 1 次之后再次探测)再断言
+	base := env.prober.callCount()
+	deadline := time.After(testWaitDeadline)
+	for env.prober.callCount() <= base {
+		select {
+		case <-deadline:
+			t.Fatal("等待巡检执行超时")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	if n := countStatus(env.p.snapshot(), StatusNormal); n != 1 {
+		t.Fatalf("巡检空键有效栈应保持 Normal, 实际 %d", n)
+	}
+	if r := env.p.stats.replays.Load(); r != 0 {
+		t.Fatalf("巡检空键有效栈应零重播, 实际 %d", r)
+	}
+
+	// 双栈全死: 巡检转排空重播自愈
+	env.setResult("127.0.0.1:12000", Egress{})
+	deadline = time.After(testWaitDeadline)
+	for env.p.stats.replays.Load() == 0 {
+		select {
+		case <-deadline:
+			t.Fatal("双栈全死应排空重播自愈")
+		case <-time.After(time.Millisecond):
+		}
+	}
+	env.p.Close()
+	waitNoLeak(t, before)
+}

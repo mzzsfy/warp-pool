@@ -24,6 +24,13 @@ type Egress struct {
 	V4, V6 netip.Addr
 }
 
+// anyValid 任一栈地址有效
+func (e Egress) anyValid() bool { return e.V4.IsValid() || e.V6.IsValid() }
+
+// whitelistedEmptyKey 空键白名单:探测已有有效栈但键策略取空(如纯 v4 环境配 ByV6),
+// 豁免唯一性直接放行;全零出口不命中(探测失败仍走自愈)
+func whitelistedEmptyKey(key string, e Egress) bool { return key == "" && e.anyValid() }
+
 // Prober 经指定实例代理探测出口
 type Prober interface {
 	// Probe 经 proxyAddr 指向的实例代理探测出口双栈地址;
